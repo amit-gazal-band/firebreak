@@ -43,11 +43,27 @@ Fixes, identical for every team:
 
 After the fixes, seed 5 over 30 ticks: `none −60`, `perfect +3`. The reference gap exists.
 
-## 4. Batch results
+## 4. Batch 1: seeds 11–13, prompt v2
 
-See section 5 once a batch has run. Commands:
+| Seed | none | perfect | band | subagents |
+|---|---|---|---|---|
+| 11 | −80 | 17 | 12 | −50 |
+| 12 | −1 | 49 | −34 | −9 |
+| 13 | −52 | 7 | −47 | −50 |
+| **mean** | **−44** | **+24** | **−23** | **−36** |
+
+- The reference gap holds on every seed (perfect − none ≈ 68 points on average), so the game rewards information. That was the M5 gate.
+- Band averaged ahead of sub-agents but far below perfect. Its metrics showed why: 2–3× more idle agent-ticks than perfect, and **about 30% of Band decisions sent a message without giving an order** (73 of 239 on seed 11). The agents talked instead of acting. Band never used `create_room`.
+- Sub-agents: the orchestrator's queue is short, but bodies sit idle between spawns (idle agent-ticks 126–156, the highest of all teams). The forecast almost never reached a non-scout (0–1 tick lead).
+
+Fix (prompt v3, shared rules text, so it applies to every team with communication tools): *"a message never replaces an order. In the same turn, send what teammates need to know AND give your own order."*
+
+## 5. Batch 2: seeds 11–13, prompt v3
+
+Not run yet: the first match hit the Claude subscription's usage limit at tick 1. The runner aborted it as `aborted: usage_limit`, the batch stopped, and `report` skips it. Rerun when the limit resets:
 
 ```bash
-pnpm firebreak batch --seeds 3 --first-seed 11 --yes
-pnpm firebreak report
+pnpm firebreak batch --seeds 3 --first-seed 11 --yes && pnpm firebreak report
 ```
+
+Budget note: batch 1 (3 four-team matches) used ~2,000 decisions (~$8 at API prices). On the subscription backend that is enough to hit the usage window; plan larger batches on the `api` backend or across several windows.

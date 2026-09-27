@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { computeMetrics, type MatchMetrics, type WorldMetrics } from "@firebreak/recorder";
+import { computeMetrics, summarize, type MatchMetrics, type WorldMetrics } from "@firebreak/recorder";
 import { RUNS_DIR } from "./run";
 
 /** Files of the most recent batch, or null if there is none. */
@@ -10,9 +10,13 @@ function latestBatch(): string[] | null {
     .filter((f) => f.startsWith("batch-") && f.endsWith(".json"))
     .map((f) => join(RUNS_DIR, f))
     .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
-  if (!manifests[0]) return null;
-  const m = JSON.parse(readFileSync(manifests[0], "utf8")) as { files: string[] };
-  return m.files.map((f) => join(RUNS_DIR, f));
+  // The newest batch with at least one completed match (a batch stopped by a usage limit may have none).
+  for (const path of manifests) {
+    const m = JSON.parse(readFileSync(path, "utf8")) as { files: string[] };
+    const files = m.files.map((f) => join(RUNS_DIR, f)).filter((f) => existsSync(f));
+    if (files.some((f) => summarize(f).status === "completed")) return files;
+  }
+  return null;
 }
 
 const esc = (s: string) =>

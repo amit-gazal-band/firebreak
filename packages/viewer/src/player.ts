@@ -187,12 +187,13 @@ export class Player {
     const box = this.boardsEl.getBoundingClientRect();
     const W = box.width - 24;
     const H = box.height - 24;
-    const chrome = 150; // card header + counters + ticker
+    const chrome = 165; // card header + counters + ticker
     let best = { cols: 1, size: 0 };
     for (let cols = 1; cols <= n; cols++) {
       const rows = Math.ceil(n / cols);
       const size = Math.floor(Math.min((W - (cols - 1) * 12) / cols, (H - (rows - 1) * 12) / rows - chrome));
-      if (size > best.size) best = { cols, size };
+      // Prefer the squarer grid unless a wider one gives clearly bigger boards (it fills the screen better).
+      if (size > best.size * 1.05 || (best.size === 0 && size > 0)) best = { cols, size };
     }
     const size = Math.max(220, best.size);
     this.boardsEl.style.gridTemplateColumns = `repeat(${best.cols}, ${size}px)`;

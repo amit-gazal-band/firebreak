@@ -95,10 +95,12 @@ export class ClaudeCodeClient implements LlmClient {
         if (next.done) break;
         const msg = next.value as { type: string; [k: string]: unknown };
         if (msg.type === "rate_limit_event") {
-          const info = msg.rate_limit_info as { status?: string } | undefined;
+          const info = msg.rate_limit_info as
+            { status?: string; resetsAt?: number; rateLimitType?: string } | undefined;
           if (info?.status === "rejected") {
             out.fatal = "usage_limit";
-            out.error = "claude-code: subscription usage limit reached";
+            const resets = info.resetsAt ? `; resets ${new Date(info.resetsAt * 1000).toLocaleString()}` : "";
+            out.error = `claude-code: subscription usage limit reached (${info.rateLimitType ?? "limit"}${resets})`;
             break;
           }
         } else if (msg.type === "assistant") {

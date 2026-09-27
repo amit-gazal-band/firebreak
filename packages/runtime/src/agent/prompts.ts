@@ -1,6 +1,6 @@
 import { ROLES, renderMapText, type Observation, type Role, type Scenario } from "@firebreak/engine";
 
-export const PROMPT_VERSION = "2";
+export const PROMPT_VERSION = "3";
 
 const ROLE_TEXT: Record<Role, string> = {
   scout:
@@ -42,7 +42,7 @@ SCORING (team): civilian evacuated +10, civilian lost -20, each house still stan
 
 HOW YOU ACT
 - You are woken up when something relevant happens (a message, your order finished or was blocked, you saw something new, the wind changed) or every few ticks.
-- Give orders with your order tools. An order keeps running tick after tick until it is done or blocked, so you do not need to repeat it. Give at most one order per turn; a new order replaces the current one. If your current order is still right, give no order.\n- Order tools that act on a target (extinguish, clear_debris, build_firebreak, rescue, refill) walk or drive there by themselves: you do not need move_to first.\n- wait() only when there is truly nothing useful to do. Idle agents lose points.
+- Give orders with your order tools. An order keeps running tick after tick until it is done or blocked, so you do not need to repeat it. Give at most one order per turn; a new order replaces the current one. If your current order is still right, give no order.\n- Order tools that act on a target (extinguish, clear_debris, build_firebreak, rescue, refill) walk or drive there by themselves: you do not need move_to first.\n- wait() only when there is truly nothing useful to do. Idle agents lose points.\n- If you have communication tools: a message never replaces an order. In the same turn, send what teammates need to know AND give your own order.
 - Act immediately: call your tools first. Write at most one short sentence, or nothing.`;
 
 export interface PromptParts {
