@@ -3,6 +3,7 @@ import {
   ScriptedBot,
   createScenario,
   observe,
+  normalizeOrder,
   observeUnion,
   roll,
   stateHash,
@@ -121,6 +122,29 @@ describe("rules", () => {
     expect(r.events).toContainEqual(
       expect.objectContaining({ type: "order_blocked", agent: "ff1", reason: "no_fire_at_target" }),
     );
+  });
+
+  it("redirects a move_to onto an impossible tile to the nearest reachable one", () => {
+    const scn = createScenario(5);
+    const s = scn.initial;
+    const water = s.tiles.findIndex((k) => k === "water");
+    const r = normalizeOrder(s, "ff1", { type: "move_to", x: water % s.size, y: Math.floor(water / s.size) });
+    expect(r.note).toMatch(/nearest reachable/);
+    expect(validateOrder(s, "ff1", r.order)).toBeNull();
+  });
+
+  it("explains which debris blocks a path", () => {
+    const scn = tinyWorld();
+    const s = scn.initial;
+    // A road corridor walled by water, blocked by debris.
+    s.tiles = s.tiles.map(() => "water");
+    for (let x = 0; x < 10; x++) s.tiles[5 * s.size + x] = "road";
+    s.tiles[5 * s.size + 5] = "debris";
+    const r = s.agents.find((a) => a.id === "rescuer")!;
+    r.pos = [1, 5];
+    const out = step(scn, s, { rescuer: { type: "move_to", x: 8, y: 5 } });
+    const blocked = out.events.find((e) => e.type === "order_blocked");
+    expect(blocked && "detail" in blocked ? blocked.detail : "").toMatch(/debris at \(5,5\)/);
   });
 
   it("the rescuer can only drive on roads", () => {

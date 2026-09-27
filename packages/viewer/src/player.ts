@@ -121,6 +121,9 @@ export class Player {
         visible: true,
       };
       canvas.addEventListener("click", (e) => this.onClick(c, e));
+      head.title = "Click to focus on this team (click again for all)";
+      head.style.cursor = "pointer";
+      head.addEventListener("click", () => this.toggleFocus(c));
       this.cards.push(c);
       const lbl = el("label");
       const cb = el("input");
@@ -179,7 +182,7 @@ export class Player {
   }
 
   private layout() {
-    const visible = this.cards.filter((c) => c.visible);
+    const visible = this.focused ? [this.focused] : this.cards.filter((c) => c.visible);
     const n = Math.max(1, visible.length);
     const box = this.boardsEl.getBoundingClientRect();
     const W = box.width - 24;
@@ -204,6 +207,18 @@ export class Player {
     this.scrubMarks.width = Math.round(r.width * dpr);
     this.scrubMarks.height = Math.round(r.height * dpr);
     this.lastVersion = -1;
+  }
+
+  private focused: Card | null = null;
+
+  /** Presenter mode: show one board at full size (PLAN M9). */
+  private toggleFocus(c: Card) {
+    this.focused = this.focused === c ? null : c;
+    for (const x of this.cards) {
+      const show = this.focused ? x === this.focused : x.visible;
+      x.root.style.display = show ? "" : "none";
+    }
+    this.layout();
   }
 
   private togglePlay() {
@@ -285,7 +300,7 @@ export class Player {
     let leaderScore = -Infinity;
     let tickShown = 0;
     for (const c of this.cards) {
-      if (!c.visible) continue;
+      if (!c.visible || (this.focused && c !== this.focused)) continue;
       const f = this.tl.frameAt(c.world, t);
       const ctx = c.canvas.getContext("2d")!;
       ctx.fillStyle = "#11131c";
