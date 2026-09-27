@@ -3,7 +3,8 @@ import type { Budget } from "./budget";
 import type { MatchConfig } from "./config";
 import type { LlmClient } from "./llm/types";
 
-export type OrderResult = { ok: true; effective_tick: number } | { ok: false; error: string };
+export type OrderResult =
+  { ok: true; effective_tick: number; order: Order; note?: string } | { ok: false; error: string };
 
 /** What a team controller gets to interact with its world. */
 export interface WorldHandle {

@@ -1,4 +1,13 @@
-import { ScriptedBot, createScenario, observe, observeUnion, renderMapText, step, validateOrder, type OrderBatch } from "@firebreak/engine";
+import {
+  ScriptedBot,
+  createScenario,
+  observe,
+  observeUnion,
+  renderMapText,
+  step,
+  validateOrder,
+  type OrderBatch,
+} from "@firebreak/engine";
 
 const play = (seed: number, union: boolean) => {
   const scn = createScenario(seed);
@@ -20,6 +29,27 @@ const play = (seed: number, union: boolean) => {
 console.log(renderMapText(createScenario(1)));
 for (const union of [false, true]) {
   const rows = Array.from({ length: 20 }, (_, i) => play(i + 1, union));
-  const avg = (k: keyof (typeof rows)[0]) => (rows.reduce((a, r) => a + (r[k] as number), 0) / rows.length).toFixed(1);
-  console.log(union ? "perfect" : "none   ", "total", avg("total"), "evac", avg("evacuated"), "lost", avg("lost"), "ext", avg("extinguished"), "houses", avg("houses_standing"), "destroyed", avg("houses_destroyed"), "fires left", avg("fires"), "joint", avg("joint"), "ticks", avg("tick"));
+  const avg = (k: keyof (typeof rows)[0]) =>
+    (rows.reduce((a, r) => a + (r[k] as number), 0) / rows.length).toFixed(1);
+  console.log(
+    union ? "perfect" : "none   ",
+    "total",
+    avg("total"),
+    "evac",
+    avg("evacuated"),
+    "lost",
+    avg("lost"),
+    "ext",
+    avg("extinguished"),
+    "houses",
+    avg("houses_standing"),
+    "destroyed",
+    avg("houses_destroyed"),
+    "fires left",
+    avg("fires"),
+    "joint",
+    avg("joint"),
+    "ticks",
+    avg("tick"),
+  );
 }

@@ -1,7 +1,17 @@
 import { agentIds, mergeGameConfig } from "./config";
 import { DIRS, cheb, idx, inBounds } from "./grid";
 import { Rng } from "./rng";
-import type { AgentState, Fire, GameConfig, Scenario, ScheduledEvent, TileKind, Vec, Wind, WorldState } from "./types";
+import type {
+  AgentState,
+  Fire,
+  GameConfig,
+  Scenario,
+  ScheduledEvent,
+  TileKind,
+  Vec,
+  Wind,
+  WorldState,
+} from "./types";
 
 const WINDS: Wind[] = ["N", "E", "S", "W"];
 
@@ -78,7 +88,8 @@ export function createScenario(seed: number, config: GameConfig = mergeGameConfi
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
       const p: Vec = [x, y];
-      if ((at(p) === "grass" || at(p) === "forest") && nearRoad(p) && cheb(p, station) >= 3) houseCandidates.push(p);
+      if ((at(p) === "grass" || at(p) === "forest") && nearRoad(p) && cheb(p, station) >= 3)
+        houseCandidates.push(p);
     }
   }
   rng.shuffle(houseCandidates);
@@ -98,7 +109,9 @@ export function createScenario(seed: number, config: GameConfig = mergeGameConfi
 
   // Debris on roads (not the station, the bridge, or next to the station).
   const roadTiles: Vec[] = [];
-  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) if (at([x, y]) === "road" && cheb([x, y], station) >= 3) roadTiles.push([x, y]);
+  for (let y = 0; y < S; y++)
+    for (let x = 0; x < S; x++)
+      if (at([x, y]) === "road" && cheb([x, y], station) >= 3) roadTiles.push([x, y]);
   rng.shuffle(roadTiles);
   const debris: Vec[] = [];
   for (const p of roadTiles) {
@@ -127,7 +140,11 @@ export function createScenario(seed: number, config: GameConfig = mergeGameConfi
   const lastFireTick = Math.max(6, config.ticks - 15);
   for (let i = 0; i < nExtra; i++) {
     const spots = i === 0 ? fireSpots.filter(eastSide) : fireSpots;
-    schedule.push({ tick: srng.int(5, lastFireTick), type: "fire", pos: srng.pick(spots.length ? spots : fireSpots) });
+    schedule.push({
+      tick: srng.int(5, lastFireTick),
+      type: "fire",
+      pos: srng.pick(spots.length ? spots : fireSpots),
+    });
   }
 
   let wind = srng.pick(WINDS);
@@ -176,7 +193,14 @@ export function createScenario(seed: number, config: GameConfig = mergeGameConfi
     progress: 0,
   }));
 
-  const fires: Fire[] = initialFires.map((pos) => ({ pos, intensity: 2, since: 0, last_growth: 0, last_fought: -1, max_since: -1 }));
+  const fires: Fire[] = initialFires.map((pos) => ({
+    pos,
+    intensity: 2,
+    since: 0,
+    last_growth: 0,
+    last_fought: -1,
+    max_since: -1,
+  }));
 
   const initial: WorldState = {
     tick: 0,
@@ -187,7 +211,14 @@ export function createScenario(seed: number, config: GameConfig = mergeGameConfi
     agents,
     wind: initialWind,
     bridge_collapsed: false,
-    score: { evacuated: 0, lost: 0, extinguished: 0, houses_standing: houses.length, houses_destroyed: 0, total: houses.length * 5 },
+    score: {
+      evacuated: 0,
+      lost: 0,
+      extinguished: 0,
+      houses_standing: houses.length,
+      houses_destroyed: 0,
+      total: houses.length * 5,
+    },
     ended: false,
   };
 

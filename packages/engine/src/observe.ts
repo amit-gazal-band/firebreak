@@ -1,5 +1,5 @@
 import { ROLES } from "./config";
-import { cheb, idx, tileAt } from "./grid";
+import { idx, tileAt } from "./grid";
 import type { AgentState, Order, OrderStatus, Role, Scenario, Vec, Wind, WorldState } from "./types";
 
 export interface Observation {
@@ -94,19 +94,19 @@ function buildObservation(
         .filter((c) => c.status === "waiting" && seen(c.pos))
         .map((c) => ({ id: c.id, pos: c.pos, deadline_tick: c.deadline })),
       debris,
-      houses: initialHouses
-        .filter(seen)
-        .map((p) => ({
-          pos: p,
-          state: tileAt(s, p) !== "house" ? "destroyed" : burningKeys.has(idx(S, p)) ? "burning" : "ok",
-        })),
+      houses: initialHouses.filter(seen).map((p) => ({
+        pos: p,
+        state: tileAt(s, p) !== "house" ? "destroyed" : burningKeys.has(idx(S, p)) ? "burning" : "ok",
+      })),
       teammates: s.agents
         .filter((a) => a.id !== self.id && (opts.allTeammates || seen(a.pos)))
         .map((a) => ({
           id: a.id,
           role: a.role,
           pos: a.pos,
-          ...(opts.teammateOrders ? { order: formatOrder(a.order_status === "active" ? a.order : null) } : {}),
+          ...(opts.teammateOrders
+            ? { order: formatOrder(a.order_status === "active" ? a.order : null) }
+            : {}),
         })),
     },
   };
@@ -157,8 +157,10 @@ export function renderMapText(scn: Scenario): string {
     station: "S",
   };
   const S = scn.config.size;
-  const header = "    " + Array.from({ length: S }, (_, x) => String(x % 10)).join("");
-  const rows = [header];
+  const tens =
+    "    " + Array.from({ length: S }, (_, x) => (x >= 10 ? String(Math.floor(x / 10)) : " ")).join("");
+  const units = "  y " + Array.from({ length: S }, (_, x) => String(x % 10)).join("");
+  const rows = ["x→", tens, units];
   for (let y = 0; y < S; y++) {
     let row = String(y).padStart(3, " ") + " ";
     for (let x = 0; x < S; x++) row += glyph[scn.initial.tiles[y * S + x]!] ?? "?";

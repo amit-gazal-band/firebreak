@@ -17,8 +17,10 @@ export class Budget {
     w.tokens += tokens;
     w.usd += usd;
     this.perWorld.set(worldId, w);
-    if (this.usd > this.limitUsd) this.onExceeded(`budget_usd: spent $${this.usd.toFixed(2)} > $${this.limitUsd}`);
-    else if (this.tokens > this.limitTokens) this.onExceeded(`budget_tokens: ${this.tokens} > ${this.limitTokens}`);
+    if (this.usd > this.limitUsd)
+      this.onExceeded(`budget_usd: spent $${this.usd.toFixed(2)} > $${this.limitUsd}`);
+    else if (this.tokens > this.limitTokens)
+      this.onExceeded(`budget_tokens: ${this.tokens} > ${this.limitTokens}`);
   }
 
   world(worldId: string): { tokens: number; usd: number } {

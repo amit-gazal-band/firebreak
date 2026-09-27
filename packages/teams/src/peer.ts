@@ -51,8 +51,11 @@ export class PeerTeam implements TeamController {
         llm,
         system,
         tools,
-        observe: (s) => (view === "union" ? observeUnion(world.scenario, s, a.id) : observe(world.scenario, s, a.id)),
-        ...(t ? { executeOther: (name: string, input: Record<string, unknown>) => t.call(a.id, name, input) } : {}),
+        observe: (s) =>
+          view === "union" ? observeUnion(world.scenario, s, a.id) : observe(world.scenario, s, a.id),
+        ...(t
+          ? { executeOther: (name: string, input: Record<string, unknown>) => t.call(a.id, name, input) }
+          : {}),
         log,
       });
       t?.onDeliver(a.id, (m) => agent.deliver(m));
@@ -76,7 +79,11 @@ export class PeerTeam implements TeamController {
   describe() {
     const tools: Record<string, unknown> = {};
     for (const [id, defs] of Object.entries(this.toolDefs)) {
-      tools[id] = defs.map((d) => ({ name: d.name, description: d.description, input_schema: jsonSchema(d) }));
+      tools[id] = defs.map((d) => ({
+        name: d.name,
+        description: d.description,
+        input_schema: jsonSchema(d),
+      }));
     }
     return { prompts: this.prompts, tools };
   }

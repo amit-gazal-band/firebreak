@@ -3,6 +3,7 @@ import {
   createScenario,
   stateHash,
   step,
+  normalizeOrder,
   validateOrder,
   type EndFrame,
   type MatchHeader,
@@ -74,7 +75,11 @@ export class MatchRunner {
     this.ac.abort();
   }
 
+  private ended = false;
+
   private emit(frame: StreamFrame): void {
+    if (this.ended) return;
+    if (frame.kind === "end") this.ended = true;
     for (const s of this.o.sinks) s.write(frame);
   }
 
@@ -92,7 +97,8 @@ export class MatchRunner {
   }
 
   private handle(w: World): WorldHandle {
-    const runner = this;
+    const emit = (f: StreamFrame) => this.emit(f);
+    const now = () => this.clock.now();
     return {
       worldId: w.id,
       team: w.factory.type,
@@ -102,22 +108,35 @@ export class MatchRunner {
       signal: this.ac.signal,
       llm: w.factory.usesLlm ? this.o.llm : null,
       state: () => w.state,
-      now: () => runner.clock.now(),
+      now,
       submitOrder(agentId, order) {
         if (w.state.ended) return { ok: false, error: "the match is over" };
+        const norm = normalizeOrder(w.state, agentId, order);
+        order = norm.order;
         const err = validateOrder(w.state, agentId, order);
-        const base = { kind: "event" as const, world_id: w.id, tick: w.state.tick, t_ms: runner.clock.now(), agent_id: agentId };
+        const base = {
+          kind: "event" as const,
+          world_id: w.id,
+          tick: w.state.tick,
+          t_ms: now(),
+          agent_id: agentId,
+        };
         if (err) {
-          runner.emit({ ...base, type: "order_rejected", payload: { order, error: err } });
+          emit({ ...base, type: "order_rejected", payload: { order, error: err } });
           return { ok: false, error: err };
         }
         // Recorded orders are what `verify` replays (SPEC §8.5).
-        runner.emit({ ...base, type: "order_issued", payload: { order } });
+        emit({ ...base, type: "order_issued", payload: { order } });
         w.pending[agentId] = order;
-        return { ok: true, effective_tick: w.state.tick + 1 };
+        return {
+          ok: true,
+          effective_tick: w.state.tick + 1,
+          order,
+          ...(norm.note ? { note: norm.note } : {}),
+        };
       },
       emit(frame: DistributiveOmit<StreamFrame, "world_id">) {
-        runner.emit({ ...frame, world_id: w.id } as StreamFrame);
+        emit({ ...frame, world_id: w.id } as StreamFrame);
       },
       abort: (reason) => this.abort(reason),
     };
@@ -128,7 +147,15 @@ export class MatchRunner {
       if (e.type === "moved") continue; // positions are in the tick state
       const { type, ...payload } = e;
       const agent = "agent" in e ? e.agent : "by" in e && typeof e.by === "string" ? e.by : undefined;
-      this.emit({ kind: "event", world_id: w.id, tick, t_ms, type, ...(agent ? { agent_id: agent } : {}), payload });
+      this.emit({
+        kind: "event",
+        world_id: w.id,
+        tick,
+        t_ms,
+        type,
+        ...(agent ? { agent_id: agent } : {}),
+        payload,
+      });
     }
   }
 
@@ -184,11 +211,14 @@ export class MatchRunner {
       if (this.worlds.every((w) => w.state.ended)) break;
       if (tick % 10 === 0) {
         this.o.log?.(
-          `tick ${tick}: ` + this.worlds.map((w) => `${w.factory.type} ${w.state.score.total}`).join(" | ") + ` · $${this.budget.usd.toFixed(3)}`,
+          `tick ${tick}: ` +
+            this.worlds.map((w) => `${w.factory.type} ${w.state.score.total}`).join(" | ") +
+            ` · $${this.budget.usd.toFixed(3)}`,
         );
       }
     }
 
+    // Stop new decisions, let in-flight ones finish so they are recorded, then clean up.
     for (const w of this.worlds) {
       try {
         await w.controller.teardown();
@@ -196,6 +226,10 @@ export class MatchRunner {
         this.o.log?.(`teardown ${w.id} failed: ${e instanceof Error ? e.message : e}`);
       }
     }
+    await Promise.race([
+      Promise.all(this.worlds.map((w) => w.controller.idle())),
+      new Promise((r) => setTimeout(r, 30_000)),
+    ]);
     const aborted = this.ac.signal.aborted;
     const results = this.worlds.map((w) => ({
       world_id: w.id,
@@ -204,7 +238,14 @@ export class MatchRunner {
       cost_usd: this.budget.world(w.id).usd,
     }));
     if (aborted) {
-      this.emit({ kind: "event", world_id: this.worlds[0]?.id ?? "", tick: this.worlds[0]?.state.tick ?? 0, t_ms: this.clock.now(), type: "match_aborted", payload: { reason: this.abortReason } });
+      this.emit({
+        kind: "event",
+        world_id: this.worlds[0]?.id ?? "",
+        tick: this.worlds[0]?.state.tick ?? 0,
+        t_ms: this.clock.now(),
+        type: "match_aborted",
+        payload: { reason: this.abortReason },
+      });
     }
     const end: EndFrame = {
       kind: "end",

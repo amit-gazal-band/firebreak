@@ -53,7 +53,16 @@ export class MessageLog {
 
   sent(from: string, m: OutgoingMessage, id = messageId(this.world.worldId)): { id: string; t_ms: number } {
     const t_ms = this.world.now();
-    this.world.emit({ kind: "message", id, t_ms, from, to: m.to, channel: m.channel, text: m.text, ...(m.meta ? { meta: m.meta } : {}) });
+    this.world.emit({
+      kind: "message",
+      id,
+      t_ms,
+      from,
+      to: m.to,
+      channel: m.channel,
+      text: m.text,
+      ...(m.meta ? { meta: m.meta } : {}),
+    });
     return { id, t_ms };
   }
 

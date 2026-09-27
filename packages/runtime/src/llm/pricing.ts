@@ -22,6 +22,7 @@ export function costUsd(
 ): { usd: number; known: boolean } {
   const p = priceFor(model);
   if (!p) return { usd: 0, known: false };
-  const usd = (u.input * p.input + u.output * p.output + u.cacheRead * p.cacheRead + u.cacheWrite * p.cacheWrite) / 1e6;
+  const usd =
+    (u.input * p.input + u.output * p.output + u.cacheRead * p.cacheRead + u.cacheWrite * p.cacheWrite) / 1e6;
   return { usd, known: true };
 }

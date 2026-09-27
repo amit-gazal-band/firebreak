@@ -222,7 +222,8 @@ export function step(scn: Scenario, prev: WorldState, orders: OrderBatch = {}): 
       const ni = idx(S, n);
       const kind = s.tiles[ni]!;
       if (!FLAMMABLE.has(kind) || occupied.has(ni)) continue;
-      const p = cfg.fire.base_spread * (FUEL[kind] ?? 0) * windFactor(s.wind, d) * INTENSITY_SPREAD[f.intensity];
+      const p =
+        cfg.fire.base_spread * (FUEL[kind] ?? 0) * windFactor(s.wind, d) * INTENSITY_SPREAD[f.intensity];
       if (roll(scn.seed, t, n[0], n[1], `spread:${d[0]},${d[1]}`) < p) {
         occupied.add(ni);
         newFires.push({ pos: n, intensity: 1, since: t, last_growth: t, last_fought: -1, max_since: -1 });
@@ -273,7 +274,14 @@ export function step(scn: Scenario, prev: WorldState, orders: OrderBatch = {}): 
     switch (e.type) {
       case "fire":
         if (FLAMMABLE.has(tileAt(s, e.pos)) && !burningNow.has(idx(S, e.pos))) {
-          s.fires.push({ pos: e.pos, intensity: 2, since: t, last_growth: t, last_fought: -1, max_since: -1 });
+          s.fires.push({
+            pos: e.pos,
+            intensity: 2,
+            since: t,
+            last_growth: t,
+            last_fought: -1,
+            max_since: -1,
+          });
           burningNow.add(idx(S, e.pos));
           events.push({ type: "fire_started", pos: e.pos, cause: "scheduled" });
         }
@@ -283,7 +291,13 @@ export function step(scn: Scenario, prev: WorldState, orders: OrderBatch = {}): 
         events.push({ type: "wind_changed", wind: e.wind });
         break;
       case "civilian":
-        s.civilians.push({ id: e.id, pos: e.pos, appeared: t, deadline: t + cfg.civilian_deadline, status: "waiting" });
+        s.civilians.push({
+          id: e.id,
+          pos: e.pos,
+          appeared: t,
+          deadline: t + cfg.civilian_deadline,
+          status: "waiting",
+        });
         events.push({ type: "civilian_spawned", id: e.id, pos: e.pos });
         break;
       case "bridge_collapse":
@@ -305,7 +319,8 @@ export function step(scn: Scenario, prev: WorldState, orders: OrderBatch = {}): 
 
   // 9. Score and end.
   s.score.houses_standing = s.tiles.filter((k) => k === "house").length;
-  s.score.total = 10 * s.score.evacuated - 20 * s.score.lost + s.score.extinguished + 5 * s.score.houses_standing;
+  s.score.total =
+    10 * s.score.evacuated - 20 * s.score.lost + s.score.extinguished + 5 * s.score.houses_standing;
   const pending = scn.schedule.some((e) => e.tick > t && (e.type === "fire" || e.type === "civilian"));
   const waiting = s.civilians.some((c) => c.status === "waiting");
   if (t >= cfg.ticks) {
@@ -350,6 +365,39 @@ function goalFor(s: WorldState, a: AgentState, o: Order): ((p: Vec) => boolean) 
 }
 
 /**
+ * Make an order executable where the intent is clear (SPEC §6.4): a move_to onto a tile the agent
+ * cannot stand on (water, a house, off-road for the rescuer) is redirected to the nearest tile it can.
+ * Returns the order to use and a note for the tool result.
+ */
+export function normalizeOrder(s: WorldState, agentId: string, o: Order): { order: Order; note?: string } {
+  const a = s.agents.find((a) => a.id === agentId);
+  if (!a || o.type !== "move_to" || !inBounds(s.size, [o.x, o.y])) return { order: o };
+  if (canStandOn(a.role, tileAt(s, [o.x, o.y]))) return { order: o };
+  let best: Vec | null = null;
+  let bestD = Infinity;
+  for (let y = 0; y < s.size; y++) {
+    for (let x = 0; x < s.size; x++) {
+      if (!canStandOn(a.role, tileAt(s, [x, y]))) continue;
+      const d =
+        Math.abs(x - o.x) + Math.abs(y - o.y) + (Math.abs(x - a.pos[0]) + Math.abs(y - a.pos[1])) / 1000;
+      if (d < bestD) {
+        bestD = d;
+        best = [x, y];
+      }
+    }
+  }
+  if (!best) return { order: o };
+  const why =
+    a.role === "rescuer"
+      ? "the rescuer can only drive on roads and the bridge"
+      : `(${o.x},${o.y}) is ${tileAt(s, [o.x, o.y])}`;
+  return {
+    order: { type: "move_to", x: best[0], y: best[1] },
+    note: `${why}; heading to the nearest reachable tile (${best[0]},${best[1]}) instead`,
+  };
+}
+
+/**
  * Validate an order at submission time (the tool result, SPEC §6.4).
  * Returns null if accepted, or a human-readable error.
  */
@@ -369,6 +417,7 @@ export function validateOrder(s: WorldState, agentId: string, o: Order): string 
       : `cannot stand on (${o.x},${o.y}): it is ${tileAt(s, target!)}`;
   }
   if (o.type === "extinguish" && a.water <= 0) return "no water left; refill first";
-  if (o.type === "rescue" && !s.civilians.some((c) => c.id === o.civilian_id)) return `unknown civilian ${o.civilian_id}`;
+  if (o.type === "rescue" && !s.civilians.some((c) => c.id === o.civilian_id))
+    return `unknown civilian ${o.civilian_id}`;
   return null;
 }

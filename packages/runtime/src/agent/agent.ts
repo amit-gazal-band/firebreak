@@ -1,4 +1,11 @@
-import { formatOrder, key, type Observation, type Role, type WorldEvent, type WorldState } from "@firebreak/engine";
+import {
+  formatOrder,
+  key,
+  type Observation,
+  type Role,
+  type WorldEvent,
+  type WorldState,
+} from "@firebreak/engine";
 import type { LlmClient, ToolDef, ToolResult } from "../llm/types";
 import type { WorldHandle } from "../team";
 import type { DeliveredMessage, MessageLog } from "../transport";
@@ -37,7 +44,12 @@ export class LlmAgent {
   private stopped = false;
   private obs: Observation | null = null;
   private lastDecisionTick = -Infinity;
-  private seen = { fires: new Set<string>(), civilians: new Set<string>(), debris: new Set<string>(), destroyed: new Set<string>() };
+  private seen = {
+    fires: new Set<string>(),
+    civilians: new Set<string>(),
+    debris: new Set<string>(),
+    destroyed: new Set<string>(),
+  };
   private lastWind: string | null = null;
   private forecasts = new Set<string>();
   private bridgeCollapsedSeen = false;
@@ -45,6 +57,7 @@ export class LlmAgent {
   private unread = 0;
   private orderLog: string[] = [];
   decisions = 0;
+  private decisionsThisTick = 0;
 
   constructor(private o: AgentOptions) {
     this.id = o.id;
@@ -54,6 +67,7 @@ export class LlmAgent {
 
   onTick(state: WorldState, events: WorldEvent[]): void {
     if (this.stopped) return;
+    this.decisionsThisTick = 0;
     this.obs = this.o.observe(state);
     const obs = this.obs;
     for (const e of events) {
@@ -76,7 +90,8 @@ export class LlmAgent {
     for (const f of v.fires) fresh(this.seen.fires, key(f.pos), `new fire seen at (${f.pos})`);
     for (const c of v.civilians) fresh(this.seen.civilians, c.id, `civilian ${c.id} seen at (${c.pos})`);
     for (const d of v.debris) fresh(this.seen.debris, key(d), `debris seen at (${d})`);
-    for (const h of v.houses) if (h.state === "destroyed") fresh(this.seen.destroyed, key(h.pos), `house at (${h.pos}) destroyed`);
+    for (const h of v.houses)
+      if (h.state === "destroyed") fresh(this.seen.destroyed, key(h.pos), `house at (${h.pos}) destroyed`);
     if (v.bridge === "collapsed" && !this.bridgeCollapsedSeen) {
       this.bridgeCollapsedSeen = true;
       this.reasons.add("the bridge has collapsed");
@@ -92,8 +107,12 @@ export class LlmAgent {
     }
     // Forget sightings that are gone so they can trigger again if they reappear.
     const visibleFires = new Set(v.fires.map((f) => key(f.pos)));
-    for (const k of [...this.seen.fires]) if (!visibleFires.has(k) && this.withinSight(k)) this.seen.fires.delete(k);
-    if (state.tick - this.lastDecisionTick >= (this.o.heartbeatTicks ?? this.o.world.config.agent.heartbeat_ticks)) {
+    for (const k of [...this.seen.fires])
+      if (!visibleFires.has(k) && this.withinSight(k)) this.seen.fires.delete(k);
+    if (
+      state.tick - this.lastDecisionTick >=
+      (this.o.heartbeatTicks ?? this.o.world.config.agent.heartbeat_ticks)
+    ) {
       this.reasons.add("heartbeat");
     }
     this.pump();
@@ -121,7 +140,11 @@ export class LlmAgent {
   }
 
   private pump(): void {
-    if (this.busy || this.stopped || this.reasons.size === 0 || !this.obs || this.o.world.signal.aborted) return;
+    if (this.busy || this.stopped || this.reasons.size === 0 || !this.obs || this.o.world.signal.aborted)
+      return;
+    // Guards against runaway loops (e.g. message ping-pong in virtual time); never reached at real LLM latency.
+    if (this.decisionsThisTick >= this.o.world.config.agent.max_decisions_per_tick) return;
+    this.decisionsThisTick++;
     this.busy = this.decide().finally(() => {
       this.busy = null;
       if (!this.stopped) queueMicrotask(() => this.pump());
@@ -151,7 +174,13 @@ export class LlmAgent {
     for (const m of msgs.slice(msgs.length - newCount)) this.o.log?.consumed(m.id, this.id);
     this.unread = 0;
     const tickOf = (ms: number) => Math.floor(ms / Math.max(1, w.config.tick_ms));
-    const promptMsgs: PromptMessage[] = msgs.map((m) => ({ from: m.from, channel: m.channel, text: m.text, tick: tickOf(m.sent_ms), addressed: m.addressed }));
+    const promptMsgs: PromptMessage[] = msgs.map((m) => ({
+      from: m.from,
+      channel: m.channel,
+      text: m.text,
+      tick: tickOf(m.sent_ms),
+      addressed: m.addressed,
+    }));
     const extra = this.o.extraPrompt?.();
     const user = userPrompt({
       obs,
@@ -162,7 +191,14 @@ export class LlmAgent {
       ...(extra ? { extra } : {}),
     });
 
-    w.emit({ kind: "event", tick: obs.tick, t_ms: w.now(), type: "wake", agent_id: this.id, payload: { reasons } });
+    w.emit({
+      kind: "event",
+      tick: obs.tick,
+      t_ms: w.now(),
+      type: "wake",
+      agent_id: this.id,
+      payload: { reasons },
+    });
     const started = w.now();
     const id = `${w.worldId}-${this.id}-c${++callSeq}`;
     const res = await this.o.llm.decide({
@@ -206,8 +242,12 @@ export class LlmAgent {
       const r = w.submitOrder(this.id, order);
       const t = w.state().tick;
       if (r.ok) {
-        this.logOrder(`t${t} ${formatOrder(order)} → accepted`);
-        return { text: `accepted: ${formatOrder(order)} takes effect on tick ${r.effective_tick}`, isError: false };
+        this.logOrder(`t${t} ${formatOrder(r.order)} → accepted`);
+        const note = r.note ? ` (${r.note})` : "";
+        return {
+          text: `accepted: ${formatOrder(r.order)} takes effect on tick ${r.effective_tick}${note}`,
+          isError: false,
+        };
       }
       return { text: `rejected: ${r.error}`, isError: true };
     }

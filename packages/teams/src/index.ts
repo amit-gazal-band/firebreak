@@ -1,8 +1,12 @@
 import type { TeamFactory } from "@firebreak/runtime";
+import { band } from "./band";
+import { subagents } from "./subagents";
 import { PeerTeam } from "./peer";
 import { botsNone, botsPerfect } from "./scripted";
 
 export { PeerTeam } from "./peer";
+export { BandTransport, band } from "./band";
+export { SubagentTeam, subagents, ORCHESTRATOR } from "./subagents";
 export { botsNone, botsPerfect } from "./scripted";
 
 export const none: TeamFactory = {
@@ -22,6 +26,8 @@ export const perfect: TeamFactory = {
 const REGISTRY: Record<string, TeamFactory> = {
   none,
   perfect,
+  band,
+  subagents,
   "bots-none": botsNone,
   "bots-perfect": botsPerfect,
 };

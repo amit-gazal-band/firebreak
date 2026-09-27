@@ -1,3 +1,5 @@
 pnpm-lock.yaml
 runs/
 dist/
+node_modules/
+docs/

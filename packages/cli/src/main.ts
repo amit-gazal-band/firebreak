@@ -20,7 +20,9 @@ MATCH is a path to a runs/*.sqlite file (or its file name inside runs/).
 `;
 
 export function matchPath(p: string): string {
-  return p.includes("/") || p.endsWith(".sqlite") ? resolve(process.env.INIT_CWD ?? process.cwd(), p.includes("/") ? p : `runs/${p}`) : resolve(RUNS_DIR, `${p}.sqlite`);
+  return p.includes("/") || p.endsWith(".sqlite")
+    ? resolve(process.env.INIT_CWD ?? process.cwd(), p.includes("/") ? p : `runs/${p}`)
+    : resolve(RUNS_DIR, `${p}.sqlite`);
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -73,9 +75,17 @@ async function main(argv: string[]): Promise<number> {
           (runArgs.virtual ? " (virtual time)" : "") +
           (c.teams.some((t) => !t.startsWith("bots")) ? `, llm ${c.llm.backend}/${c.llm.model}` : ""),
       );
-      const { file, result } = await runMatch(rc, { virtual: runArgs.virtual, cliArgs: argv, ...(live ? { extraSinks: [live.sink] } : {}), log });
+      const { file, result } = await runMatch(rc, {
+        virtual: runArgs.virtual,
+        cliArgs: argv,
+        ...(live ? { extraSinks: [live.sink] } : {}),
+        log,
+      });
       console.log(`\n${result.status}${result.reason ? ` (${result.reason})` : ""}`);
-      for (const r of result.results) console.log(`  ${r.team.padEnd(14)} score ${String(r.score).padStart(4)}   $${r.cost_usd.toFixed(3)}`);
+      for (const r of result.results)
+        console.log(
+          `  ${r.team.padEnd(14)} score ${String(r.score).padStart(4)}   $${r.cost_usd.toFixed(3)}`,
+        );
       console.log(`recording: ${relRuns(file)}`);
       if (live) {
         console.log("viewer still running — Ctrl+C to exit");
@@ -88,14 +98,18 @@ async function main(argv: string[]): Promise<number> {
       if (!p) throw new Error("verify needs a MATCH");
       const r = verifyRecording(matchPath(p));
       console.log(`scenario matches seed: ${r.scenario_ok ? "yes" : "NO"}`);
-      for (const w of r.worlds) console.log(`  ${w.world_id.padEnd(18)} ${w.ticks} ticks  ${w.mismatch_tick === null ? "ok" : `MISMATCH at tick ${w.mismatch_tick}`}`);
+      for (const w of r.worlds)
+        console.log(
+          `  ${w.world_id.padEnd(18)} ${w.ticks} ticks  ${w.mismatch_tick === null ? "ok" : `MISMATCH at tick ${w.mismatch_tick}`}`,
+        );
       console.log(r.ok ? "verified" : "verification FAILED");
       return r.ok ? 0 : 1;
     }
     case "list": {
       for (const s of listRecordings(RUNS_DIR)) {
         console.log(
-          `${s.file}  ${s.status}${s.abort_reason ? `(${s.abort_reason})` : ""}  ` + s.teams.map((t) => `${t.team}:${t.score ?? "-"}`).join("  "),
+          `${s.file}  ${s.status}${s.abort_reason ? `(${s.abort_reason})` : ""}  ` +
+            s.teams.map((t) => `${t.team}:${t.score ?? "-"}`).join("  "),
         );
       }
       return 0;
@@ -104,7 +118,10 @@ async function main(argv: string[]): Promise<number> {
     case "replay": {
       const { startServer } = await import("./server");
       const srv = await startServer({ port, live: false });
-      const target = cmd === "replay" && positionals[0] ? `${srv.url}/?rec=${encodeURIComponent(matchPath(positionals[0]).split("/").pop()!)}` : srv.url;
+      const target =
+        cmd === "replay" && positionals[0]
+          ? `${srv.url}/?rec=${encodeURIComponent(matchPath(positionals[0]).split("/").pop()!)}`
+          : srv.url;
       console.log(`viewer: ${target}`);
       await new Promise(() => {});
       return 0;
@@ -113,13 +130,20 @@ async function main(argv: string[]): Promise<number> {
       const { exportHtml } = await import("./export");
       const p = positionals[0];
       if (!p) throw new Error("export needs a MATCH");
-      const out = exportHtml(matchPath(p), values.out ? resolve(cwd, values.out) : undefined, { prompts: values.prompts ?? false });
+      const out = exportHtml(matchPath(p), values.out ? resolve(cwd, values.out) : undefined, {
+        prompts: values.prompts ?? false,
+      });
       console.log(`wrote ${out}`);
       return 0;
     }
     case "batch": {
       const { runBatch } = await import("./batch");
-      return runBatch({ ...runArgs, seeds: Number(values.seeds ?? 20), firstSeed: Number(values["first-seed"] ?? 1), yes: values.yes ?? false });
+      return runBatch({
+        ...runArgs,
+        seeds: Number(values.seeds ?? 20),
+        firstSeed: Number(values["first-seed"] ?? 1),
+        yes: values.yes ?? false,
+      });
     }
     case "report": {
       const { writeReport } = await import("./report");

@@ -1,0 +1,17 @@
+# Copy to band_agents.yaml (git-ignored) and fill in one external Band agent per role.
+# Create agents at https://app.band.ai (Agents > Create Agent > External).
+scout:
+  agent_id: ""
+  api_key: ""
+ff1:
+  agent_id: ""
+  api_key: ""
+ff2:
+  agent_id: ""
+  api_key: ""
+engineer:
+  agent_id: ""
+  api_key: ""
+rescuer:
+  agent_id: ""
+  api_key: ""

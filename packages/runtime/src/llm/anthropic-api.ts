@@ -52,7 +52,10 @@ export class AnthropicApiClient implements LlmClient {
           },
           { signal: req.signal },
         );
-        out.input_tokens += msg.usage.input_tokens + (msg.usage.cache_read_input_tokens ?? 0) + (msg.usage.cache_creation_input_tokens ?? 0);
+        out.input_tokens +=
+          msg.usage.input_tokens +
+          (msg.usage.cache_read_input_tokens ?? 0) +
+          (msg.usage.cache_creation_input_tokens ?? 0);
         out.output_tokens += msg.usage.output_tokens;
         out.cache_read_tokens += msg.usage.cache_read_input_tokens ?? 0;
         cacheWrite += msg.usage.cache_creation_input_tokens ?? 0;
@@ -63,7 +66,12 @@ export class AnthropicApiClient implements LlmClient {
           if (block.type === "tool_use") {
             const r = await req.execute(block.name, block.input as Record<string, unknown>);
             out.tool_calls.push({ name: block.name, input: block.input, result: r.text });
-            results.push({ type: "tool_result", tool_use_id: block.id, content: r.text, is_error: r.isError });
+            results.push({
+              type: "tool_result",
+              tool_use_id: block.id,
+              content: r.text,
+              is_error: r.isError,
+            });
             anyError ||= r.isError;
           }
         }

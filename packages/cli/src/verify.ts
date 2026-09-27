@@ -1,4 +1,11 @@
-import { createScenario, stateHash, step, type EventFrame, type Order, type TickFrame } from "@firebreak/engine";
+import {
+  createScenario,
+  stateHash,
+  step,
+  type EventFrame,
+  type Order,
+  type TickFrame,
+} from "@firebreak/engine";
 import { loadBundle } from "@firebreak/recorder";
 
 export interface VerifyResult {
@@ -18,7 +25,9 @@ export function verifyRecording(path: string): VerifyResult {
   const scenario_ok = JSON.stringify(scn) === JSON.stringify(header.scenario);
   const out: VerifyResult = { ok: scenario_ok, worlds: [], scenario_ok };
   for (const t of header.teams) {
-    const ticks = frames.filter((f): f is TickFrame => f.kind === "tick" && f.world_id === t.world_id).sort((a, b) => a.tick - b.tick);
+    const ticks = frames
+      .filter((f): f is TickFrame => f.kind === "tick" && f.world_id === t.world_id)
+      .sort((a, b) => a.tick - b.tick);
     const orders = new Map<number, Record<string, Order>>();
     for (const f of frames) {
       if (f.kind !== "event" || f.world_id !== t.world_id || f.type !== "order_issued") continue;

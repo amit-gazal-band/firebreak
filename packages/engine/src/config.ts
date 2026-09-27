@@ -50,7 +50,9 @@ export function agentIds(team: readonly Role[]): string[] {
   });
 }
 
-type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? (T[K] extends unknown[] ? T[K] : DeepPartial<T[K]>) : T[K] };
+type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends object ? (T[K] extends unknown[] ? T[K] : DeepPartial<T[K]>) : T[K];
+};
 
 export function mergeGameConfig(overrides: DeepPartial<GameConfig> = {}): GameConfig {
   return {

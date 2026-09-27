@@ -39,17 +39,21 @@ export class ScriptedBot {
     }
     for (const f of obs.visible.fires) this.fires.set(key(f.pos), f);
     const seenDebris = new Set(obs.visible.debris.map(key));
-    for (const [k, d] of this.debris) if (cheb(d, obs.self.pos) <= r && !seenDebris.has(k)) this.debris.delete(k);
+    for (const [k, d] of this.debris)
+      if (cheb(d, obs.self.pos) <= r && !seenDebris.has(k)) this.debris.delete(k);
     for (const d of obs.visible.debris) this.debris.set(key(d), d);
     const seenCiv = new Set(obs.visible.civilians.map((c) => c.id));
     for (const [id, c] of this.civilians) {
-      if ((cheb(c.pos, obs.self.pos) <= r && !seenCiv.has(id)) || c.deadline_tick < obs.tick) this.civilians.delete(id);
+      if ((cheb(c.pos, obs.self.pos) <= r && !seenCiv.has(id)) || c.deadline_tick < obs.tick)
+        this.civilians.delete(id);
     }
     for (const c of obs.visible.civilians) this.civilians.set(c.id, c);
   }
 
   private nearest<T>(items: T[], pos: (t: T) => Vec, from: Vec): T | undefined {
-    return [...items].sort((a, b) => cheb(pos(a), from) - cheb(pos(b), from) || key(pos(a)).localeCompare(key(pos(b))))[0];
+    return [...items].sort(
+      (a, b) => cheb(pos(a), from) - cheb(pos(b), from) || key(pos(a)).localeCompare(key(pos(b))),
+    )[0];
   }
 
   private choose(obs: Observation): Order | null {

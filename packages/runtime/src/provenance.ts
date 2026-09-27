@@ -18,7 +18,10 @@ function packageVersion(name: string, from: string): string | null {
     let dir = dirname(req.resolve(name));
     for (let i = 0; i < 6; i++) {
       try {
-        const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { name?: string; version?: string };
+        const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as {
+          name?: string;
+          version?: string;
+        };
         if (pkg.name === name) return pkg.version ?? null;
       } catch {
         // keep walking up
@@ -32,7 +35,10 @@ function packageVersion(name: string, from: string): string | null {
 }
 
 /** Code and environment provenance recorded with every match (SPEC §8.2). */
-export function provenance(repoRoot: string): { code: Record<string, unknown>; environment: Record<string, unknown> } {
+export function provenance(repoRoot: string): {
+  code: Record<string, unknown>;
+  environment: Record<string, unknown>;
+} {
   const runtimeDir = join(repoRoot, "packages", "runtime");
   const teamsDir = join(repoRoot, "packages", "teams");
   return {

@@ -74,9 +74,13 @@ export class ClaudeCodeClient implements LlmClient {
       options: {
         model: this.model,
         systemPrompt: req.system,
+        // Same as the api backend: no extended thinking (it also costs ~10 s per decision).
+        thinking: { type: "disabled" },
         maxTurns: req.maxTurns + 1,
         tools: [],
         mcpServers: { [SERVER]: server },
+        // Only the game's tools: never load the account's claude.ai connectors or other MCP config.
+        strictMcpConfig: true,
         allowedTools: req.tools.map((t) => `mcp__${SERVER}__${t.name}`),
         settingSources: [],
         persistSession: false,
@@ -104,7 +108,12 @@ export class ClaudeCodeClient implements LlmClient {
           if (err) out.error = `claude-code: ${err}`;
           const m = msg.message as {
             id: string;
-            usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
+            usage?: {
+              input_tokens?: number;
+              output_tokens?: number;
+              cache_read_input_tokens?: number;
+              cache_creation_input_tokens?: number;
+            };
             content: { type: string; text?: string; input?: unknown }[];
           };
           const prev = usage.get(m.id);
@@ -128,7 +137,8 @@ export class ClaudeCodeClient implements LlmClient {
         } else if (msg.type === "user") {
           // Tool results of a turn came back. Like the api backend, continue only when a call was rejected.
           const content = (msg.message as { content: unknown }).content;
-          const hasResults = Array.isArray(content) && content.some((b) => (b as { type?: string }).type === "tool_result");
+          const hasResults =
+            Array.isArray(content) && content.some((b) => (b as { type?: string }).type === "tool_result");
           if (hasResults) {
             if (!turnHadError) break;
             turnHadError = false;

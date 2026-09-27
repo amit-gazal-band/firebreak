@@ -3,14 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build"
   },
   "dependencies": {
-    "@firebreak/engine": "workspace:*",
-    "pixi.js": "^8.13.2"
+    "@firebreak/engine": "workspace:*"
   },
   "devDependencies": {
     "vite": "^7.1.9",

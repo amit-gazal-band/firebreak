@@ -36,7 +36,7 @@ SCORING (team): civilian evacuated +10, civilian lost -20, each house still stan
 HOW YOU ACT
 - You are woken up when something relevant happens (a message, your order finished or was blocked, you saw something new, the wind changed) or every few ticks.
 - Give orders with your order tools. An order keeps running tick after tick until it is done or blocked, so you do not need to repeat it. Give at most one order per turn; a new order replaces the current one. If your current order is still right, give no order.
-- Be brief. Do not explain your reasoning at length; act.`;
+- Act immediately: call your tools first. Write at most one short sentence, or nothing.`;
 
 export interface PromptParts {
   system: string;
@@ -75,7 +75,9 @@ export function userPrompt(opts: {
   extra?: string;
 }): string {
   const lines: string[] = [];
-  lines.push(`TICK ${opts.obs.tick} (${opts.obs.ticks_left} ticks left). Woken because: ${opts.reasons.join("; ") || "heartbeat"}.`);
+  lines.push(
+    `TICK ${opts.obs.tick} (${opts.obs.ticks_left} ticks left). Woken because: ${opts.reasons.join("; ") || "heartbeat"}.`,
+  );
   lines.push("");
   lines.push("WHAT YOU SEE NOW:");
   lines.push(JSON.stringify(opts.obs));
@@ -87,7 +89,8 @@ export function userPrompt(opts: {
   if (opts.messages.length) {
     lines.push("");
     lines.push(`MESSAGES (oldest first; the last ${opts.newMessageCount} are new):`);
-    for (const m of opts.messages) lines.push(`[t${m.tick}] ${m.channel} ${m.from}${m.addressed ? " → you" : ""}: ${m.text}`);
+    for (const m of opts.messages)
+      lines.push(`[t${m.tick}] ${m.channel} ${m.from}${m.addressed ? " → you" : ""}: ${m.text}`);
   }
   if (opts.extra) {
     lines.push("");

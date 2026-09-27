@@ -78,7 +78,9 @@ describe("determinism", () => {
     // touches spreads identically in both until the teams interfere with it.
     const scn = createScenario(3);
     const idle = step(scn, scn.initial, {}).state;
-    const busy = step(scn, scn.initial, { ff1: { type: "move_to", x: scn.station[0], y: scn.station[1] + 1 } }).state;
+    const busy = step(scn, scn.initial, {
+      ff1: { type: "move_to", x: scn.station[0], y: scn.station[1] + 1 },
+    }).state;
     expect(idle.fires).toEqual(busy.fires);
   });
 });
@@ -116,14 +118,20 @@ describe("rules", () => {
   it("orders on a target that is gone are blocked (stale actions)", () => {
     const scn = tinyWorld();
     const r = step(scn, scn.initial, { ff1: { type: "extinguish", x: 5, y: 5 } });
-    expect(r.events).toContainEqual(expect.objectContaining({ type: "order_blocked", agent: "ff1", reason: "no_fire_at_target" }));
+    expect(r.events).toContainEqual(
+      expect.objectContaining({ type: "order_blocked", agent: "ff1", reason: "no_fire_at_target" }),
+    );
   });
 
   it("the rescuer can only drive on roads", () => {
     const scn = createScenario(5);
     const s = scn.initial;
     const grass = s.tiles.findIndex((k) => k === "grass");
-    const err = validateOrder(s, "rescuer", { type: "move_to", x: grass % s.size, y: Math.floor(grass / s.size) });
+    const err = validateOrder(s, "rescuer", {
+      type: "move_to",
+      x: grass % s.size,
+      y: Math.floor(grass / s.size),
+    });
     expect(err).toMatch(/roads/);
   });
 

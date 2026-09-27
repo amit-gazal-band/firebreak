@@ -8,7 +8,8 @@ const coord = { x: z.number().int().describe("column, 0-19"), y: z.number().int(
 const ORDER_TOOLS: Record<Order["type"], ToolDef> = {
   move_to: {
     name: "move_to",
-    description: "Walk to tile (x, y). The engine pathfinds and moves you every tick until you arrive or are blocked.",
+    description:
+      "Walk to tile (x, y). The engine pathfinds and moves you every tick until you arrive or are blocked.",
     schema: coord,
   },
   extinguish: {
@@ -25,12 +26,14 @@ const ORDER_TOOLS: Record<Order["type"], ToolDef> = {
   },
   clear_debris: {
     name: "clear_debris",
-    description: "Clear the debris blocking the road at (x, y). You walk next to it first; clearing takes 2 ticks.",
+    description:
+      "Clear the debris blocking the road at (x, y). You walk next to it first; clearing takes 2 ticks.",
     schema: coord,
   },
   build_firebreak: {
     name: "build_firebreak",
-    description: "Turn the grass/forest tile at (x, y) into a firebreak that cannot burn. You walk next to it first; takes 1 tick.",
+    description:
+      "Turn the grass/forest tile at (x, y) into a firebreak that cannot burn. You walk next to it first; takes 1 tick.",
     schema: coord,
   },
   rescue: {

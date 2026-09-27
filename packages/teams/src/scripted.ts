@@ -21,7 +21,9 @@ class ScriptedTeam implements TeamController {
 
   onTick(state: WorldState, _events: WorldEvent[]): void {
     for (const b of this.bots) {
-      const obs = this.opts.union ? observeUnion(this.world.scenario, state, b.id) : observe(this.world.scenario, state, b.id);
+      const obs = this.opts.union
+        ? observeUnion(this.world.scenario, state, b.id)
+        : observe(this.world.scenario, state, b.id);
       const o = b.decide(obs);
       if (o) this.world.submitOrder(b.id, o);
       if (!this.opts.announce) continue;
@@ -30,7 +32,11 @@ class ScriptedTeam implements TeamController {
         if (this.announced.has(k)) continue;
         this.announced.add(k);
         const to = state.agents.filter((a) => a.role === "firefighter" && a.id !== b.id).map((a) => a.id);
-        const { id } = this.log.sent(b.id, { to, channel: "team", text: `fire at (${f.pos}) intensity ${f.intensity}` });
+        const { id } = this.log.sent(b.id, {
+          to,
+          channel: "team",
+          text: `fire at (${f.pos}) intensity ${f.intensity}`,
+        });
         for (const r of to) {
           this.log.delivered(id, r);
           this.log.consumed(id, r);

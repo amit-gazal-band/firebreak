@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "dependencies": { "@firebreak/engine": "workspace:*", "@firebreak/runtime": "workspace:*", "@band-ai/sdk": "^0.4.7" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@band-ai/sdk": "^0.4.7",
+    "@firebreak/engine": "workspace:*",
+    "@firebreak/runtime": "workspace:*",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  }
 }

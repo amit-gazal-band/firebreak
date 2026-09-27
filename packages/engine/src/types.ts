@@ -1,16 +1,7 @@
 export type Vec = [x: number, y: number];
 
 export type TileKind =
-  | "grass"
-  | "forest"
-  | "house"
-  | "road"
-  | "water"
-  | "bridge"
-  | "debris"
-  | "firebreak"
-  | "ash"
-  | "station";
+  "grass" | "forest" | "house" | "road" | "water" | "bridge" | "debris" | "firebreak" | "ash" | "station";
 
 export type Wind = "N" | "E" | "S" | "W" | "none";
 

@@ -34,7 +34,12 @@ export interface MatchConfig {
     water_capacity: number;
     clear_debris_ticks: number;
   };
-  agent: { message_window: number; heartbeat_ticks: number; order_log: number };
+  agent: {
+    message_window: number;
+    heartbeat_ticks: number;
+    order_log: number;
+    max_decisions_per_tick: number;
+  };
   subagents: { max_lifetime_ticks: number };
   band: { agents_file: string; rest_url: string; ws_url: string };
   record: { dir: string; prompts: boolean };
@@ -72,7 +77,7 @@ export const DEFAULT_MATCH_CONFIG: MatchConfig = {
     water_capacity: G.water_capacity,
     clear_debris_ticks: G.clear_debris_ticks,
   },
-  agent: { message_window: 30, heartbeat_ticks: 3, order_log: 5 },
+  agent: { message_window: 30, heartbeat_ticks: 3, order_log: 5, max_decisions_per_tick: 3 },
   subagents: { max_lifetime_ticks: 8 },
   band: {
     agents_file: "band_agents.yaml",
@@ -146,7 +151,8 @@ export function validateConfig(c: MatchConfig): void {
   if (!Number.isInteger(c.seed)) throw new Error("seed must be an integer");
   if (c.ticks < 1) throw new Error("ticks must be >= 1");
   if (c.tick_ms < 0) throw new Error("tick_ms must be >= 0");
-  if (!["api", "claude-code"].includes(c.llm.backend)) throw new Error(`unknown llm.backend ${c.llm.backend}`);
+  if (!["api", "claude-code"].includes(c.llm.backend))
+    throw new Error(`unknown llm.backend ${c.llm.backend}`);
   if (c.teams.length === 0) throw new Error("teams must not be empty");
 }
 
@@ -157,6 +163,7 @@ export function redact<T>(v: T): T {
   if (Array.isArray(v)) return v.map(redact) as T;
   if (!isObject(v)) return v;
   const out: Record<string, unknown> = {};
-  for (const [k, val] of Object.entries(v)) out[k] = SECRET_KEY.test(k) && typeof val === "string" ? "<redacted>" : redact(val);
+  for (const [k, val] of Object.entries(v))
+    out[k] = SECRET_KEY.test(k) && typeof val === "string" ? "<redacted>" : redact(val);
   return out as T;
 }
