@@ -34,6 +34,7 @@ Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 
 ### M2: Recorder and replay core (M)
 - SQLite schema from §8.2 (`better-sqlite3`), writer and reader.
+- Store the full resolved configuration with every recording (config, code versions, environment; secrets redacted), and `run --config-from <match>` (§8.2).
 - Match runner (`runtime`): tick clock (real or accelerated), N worlds, writes `tick_state`/`event` as it goes.
 - Event stream API: a live websocket that tails the match being written, and a reader over a recording file (§8.4).
 - `firebreak run --bots scripted` and `firebreak verify <match>` (§8.5).
@@ -52,14 +53,16 @@ Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 **Done when:** a recorded scripted match replays smoothly at 10×, and seeking to any tick is instant.
 
 ### M4: LLM agent runtime and reference teams (L)
-- LLM client (Anthropic SDK): tool calling, token/cost/latency accounting, per-match budget cap (§6.3).
+- `LlmClient` interface with two backends: `api` (Anthropic SDK, API key) and `claude-code` (Claude Agent SDK, subscription login). Token/cost/latency accounting, per-match budget cap, usage-limit abort (§6.3).
+- Order tools per role, validation errors as tool results, turn limit per decision (§6.4).
+- Measure per-call latency on both backends; record the numbers in `docs/TUNING.md`.
 - Agent loop, wake triggers, and trigger merging (§6.1–6.2).
 - Base prompt per role, plus a per-transport tools section.
 - `Transport` interface with delivery logging (`sent_at` / `delivered_at` / `consumed_at`) (§7).
 - `none` and `perfect` teams (§7.1–7.2).
 - `llm_call` recording, and an inspector panel in the viewer (§9).
 
-**Done when:** a full 60-tick match with `none` and `perfect` runs live, is recorded, and replays, including the inspector.
+**Done when:** a full 60-tick match with `none` and `perfect` runs live on **each** backend, is recorded, and replays, including the inspector.
 
 ### M5: Tune the game (M)
 - Run `none` vs `perfect` across ~10 seeds.
@@ -120,7 +123,7 @@ Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 
 ## Cost estimate (per match, default config)
 
-About 5 agents × 4 LLM teams × ~60 decisions ≈ 1,200 calls, plus the orchestrator's. With Haiku 4.5 and ~4–6k input tokens per call, that's roughly **6–8M input tokens per match**. Verify it in M4 and put the real number here. `batch` always shows an estimate and asks before it starts.
+About 5 agents × 4 LLM teams × ~60 decisions ≈ 1,200 calls, plus the orchestrator's. With Haiku 4.5 and ~4–6k input tokens per call, that's roughly **6–8M input tokens per match**. On the `claude-code` backend this counts against the subscription's usage limits rather than being billed. Verify it in M4 and put the real number here. `batch` always shows an estimate and asks before it starts.
 
 ## Risks
 

@@ -139,7 +139,7 @@ Every agent gets a compact JSON observation whenever it is woken (see 6.2):
 loop until match ends:
   wait for a wake trigger
   build prompt(role, latest observation, recent messages, own order log)
-  LLM → zero or more tool calls: order(...), plus the team's communication tools
+  LLM → tool calls: at most one order tool, plus any of the team's communication tools (§6.4)
   submit order to the engine; send messages through the team's transport
 ```
 
@@ -153,11 +153,35 @@ At most one LLM call per agent is in flight. Triggers that arrive during a call 
 - The wind changed (or, for the scout, a new forecast arrived).
 - Heartbeat: 3 ticks passed with no other trigger.
 
-### 6.3 LLM
+### 6.3 LLM backends
 
+The runtime calls models through one interface, `LlmClient.decide(prompt, tools) → { toolCalls, usage, latency }`. It has two backends:
+
+| Backend | Auth | Implementation | Notes |
+|---|---|---|---|
+| `api` | `ANTHROPIC_API_KEY` | `@anthropic-ai/sdk` Messages API with tool use | Lowest latency, billed per token |
+| `claude-code` | Claude subscription: the local `claude` login, or `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` | `@anthropic-ai/claude-agent-sdk` `query()`, with a custom `systemPrompt`, built-in tools disabled, and game tools served through `createSdkMcpServer` | Not billed per token. Subject to the subscription's usage limits. Higher per-call overhead |
+
+- **One backend per match.** All teams in a match use the same backend, so the comparison stays fair. The backend is recorded with the match (§8.2).
+- **Compare within a backend.** Latency differs between backends, so reports compare matches from the same backend only (and the same `tick_ms`).
+- **Stateless calls in both backends.** Every decision is a fresh call with a freshly built prompt (§6.1). No backend-side session memory, so both backends see exactly the same input.
+- **Cost:** `api` records real cost from token usage. `claude-code` records tokens plus the SDK's `total_cost_usd` as an *estimated* cost.
+- **Usage limits:** a match is about 1,200 model calls. Before a `claude-code` match or batch starts, the runner warns that it may hit the subscription's usage limits. If a limit is hit, the match is aborted and marked `aborted: usage_limit`, not scored.
 - Default model: `claude-haiku-4-5-20251001` (fast and cheap, which keeps ticks short). Configurable per match.
-- Tool calling for orders and messages. No free-text parsing.
-- **Per-match budget cap** (tokens and $). The match aborts cleanly if it's exceeded.
+- **Per-match budget cap** (tokens, and $ for `api`). The match aborts cleanly if it's exceeded.
+
+### 6.4 Tools
+
+Everything an agent does goes through tool calls. There is no free-text parsing.
+
+- **Orders are tools**, one per order type, with a JSON schema for the arguments: `move_to(x, y)`, `extinguish(x, y)`, `refill()`, `clear_debris(x, y)`, `build_firebreak(x, y)`, `rescue(civilian_id)`, `wait()`.
+- **Only the role's own orders are exposed.** A scout gets `move_to` and `wait`. A firefighter adds `extinguish` and `refill`. An engineer adds `clear_debris` and `build_firebreak`. A rescuer adds `rescue`. This is identical across teams.
+- **An order tool returns right away**, without waiting for the order to finish. It returns either `accepted, takes effect on tick N`, or a validation error (e.g. "not adjacent", "no water", "unknown civilian"). Completion and blocking arrive later as wake triggers (§6.2).
+- **At most one order per decision.** The last valid one wins.
+- **Communication tools** come from the team's transport (§7). The reference teams have none.
+- **Sub-agent team:** sub-agents get their role's order tools plus `finish(report)`. The orchestrator gets only `spawn(body, brief)` and `wait()`.
+- **Turn limit:** one decision allows up to 3 model turns, so the model can correct itself after a validation error. After that the decision ends.
+- Tool definitions are versioned and recorded with each match (§8.2).
 
 ## 7. Teams
 
@@ -195,7 +219,7 @@ Follows the real sub-agent pattern (Claude Agent SDK / Task tool, LangGraph supe
 
 - **Orchestrator:** a 6th LLM with no body. It sees only what sub-agents report. Its tokens are included in the team's cost.
 - **Tools:** `spawn(body, brief)` starts a sub-agent that controls one body (at most one live sub-agent per body). The orchestrator is woken whenever a report arrives and handles reports one at a time as they come in. It never waits for all of them.
-- **Sub-agent:** runs the same agent loop and gets **only its brief** (no memory of earlier spawns) plus its own observations. Tools: `order(...)` and `finish(report)`.
+- **Sub-agent:** runs the same agent loop and gets **only its brief** (no memory of earlier spawns) plus its own observations. Tools: its role's order tools and `finish(report)` (§6.4).
 - **Lifetime:** a sub-agent ends when it calls `finish`, when its order is blocked and it can't recover, or after 8 ticks (then an automatic report is produced).
 - **Report:** the sub-agent's text **plus an automatic structured list of everything it saw** (generous on purpose).
 - **Faithful limits:** no incoming channel while running, no talking between peers, no interrupting.
@@ -224,12 +248,24 @@ Each match is stored in one SQLite file: `runs/<match-id>.sqlite`.
 
 | Table | Contents |
 |---|---|
-| `match` | id, created_at, config (JSON), seed, engine version, git commit, model, final status |
+| `match` | id, created_at, seed, final status, abort reason (if any) |
+| `match_config` | the full run configuration (see below) |
 | `world` | world_id, team type, final score, cost |
 | `tick_state` | world_id, tick, **full world state** (JSON), state hash |
 | `event` | id, world_id, t_ms (since match start), tick, type, agent_id, payload (JSON) |
 | `message` | id, world_id, from, to[] (or channel/room), text, sent_at, delivered_at per recipient, consumed_at per recipient |
 | `llm_call` | id, world_id, agent_id, started_at, ended_at, input/output tokens, cost, prompt, response, tool calls |
+
+**The configuration is always stored with the recording**, so every match documents exactly how it was produced:
+
+- **Resolved config:** the final values after defaults, the config file, and CLI overrides were merged, plus the original config file text and the CLI arguments.
+- **LLM:** backend (`api` / `claude-code`), model id, temperature, max tokens, turn limit.
+- **Prompts and tools:** the full text of every role prompt and transport tools section, and every tool definition, each with a content hash.
+- **Code:** engine version, git commit, a dirty-tree flag, and package versions (e.g. `@band-ai/sdk`, the Agent SDK).
+- **Environment:** OS, Node version, and the Band / Slack / Linear environment URLs.
+- **Never stored:** API keys, OAuth tokens, or other secrets. Config values that look like secrets are redacted before writing.
+
+`firebreak run --config-from <match>` starts a new match with the exact configuration of an old one (a new seed can be passed).
 
 Event types: `order_issued`, `order_completed`, `order_blocked`, `wake`, `spawn`, `report`, `room_created`, `score`, `civilian_spawned`, `civilian_lost`, `house_destroyed`, `wind_changed`, `bridge_collapsed`, `match_aborted`.
 
@@ -293,9 +329,12 @@ seed: 42
 ticks: 60
 tick_ms: 5000
 teams: [none, perfect, band, subagents]
-model: claude-haiku-4-5-20251001
-temperature: 0.2
-budget: { usd: 5.00 }
+llm:
+  backend: api                  # api | claude-code
+  model: claude-haiku-4-5-20251001
+  temperature: 0.2
+  max_turns_per_decision: 3
+budget: { usd: 5.00, tokens: 10000000 }
 map: { size: 20, houses: [8, 12], civilians: [4, 6], wind_shifts: [2, 3] }
 fire: { base_spread: 0.08, growth_every: 4, burnout_ticks: 10 }
 agent: { message_window: 30, heartbeat_ticks: 3 }
@@ -334,6 +373,6 @@ firebreak/
 1. **Band delivery semantics.** Do room members that weren't @mentioned receive a message? This decides how the Band team handles broadcast vs targeted messages.
 2. **Band accounts.** Which Band environment and organisation should host the match agents? 5 agents per concurrent Band team, created once and reused across matches?
 3. **Sub-agent implementation.** Implement the spawn/return pattern ourselves (identical LLM client, cleanest comparison), or run it on the real Claude Agent SDK (more credible to outsiders, but a different loop)? Current proposal: our own implementation, with an Agent SDK variant as a later check.
-4. **Tick length.** Is 5 s right? It depends on real model latency. Settle it during tuning (PLAN M3).
+4. **Tick length.** Is 5 s right? It depends on real model latency. Settle it during tuning (PLAN M5).
 5. **Slack and Linear workspaces.** Dedicated sandbox workspaces for v1?
 6. **Publishing.** Open-source the repo so outsiders can check fairness? That affects what can be committed (no internal URLs or keys).
