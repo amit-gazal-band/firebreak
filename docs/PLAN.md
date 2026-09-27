@@ -15,7 +15,7 @@ Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 | M2 Recorder and replay core | done | one SQLite file per match (`node:sqlite`), config stored with it, `verify` |
 | M3 Viewer | done | Canvas 2D instead of PixiJS; single-file build |
 | M4 LLM runtime and reference teams | done | both backends; `claude-code` tuned to ~4 s/decision |
-| M5 Tune the game | gate passed | perfect beat none on 3/3 seeds (mean +24 vs −44); prompt v3 batch pending the usage limit (docs/TUNING.md) |
+| M5 Tune the game | first pass, needs more seeds | batch 1: perfect beat none 3/3; batch 2 (prompt v3): band best (+26 mean) but perfect ≈ none. Needs 10–20 seeds (docs/TUNING.md §6) |
 | M6 Band team | done | real Band rooms; delivery semantics measured |
 | M7 Sub-agent team | done | orchestrator + spawn/report, hub-and-spoke in the viewer |
 | M8 Metrics and batch | done | metrics as SQL over recordings; `batch`, `report` |

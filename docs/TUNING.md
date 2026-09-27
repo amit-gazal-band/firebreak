@@ -60,10 +60,23 @@ Fix (prompt v3, shared rules text, so it applies to every team with communicatio
 
 ## 5. Batch 2: seeds 11–13, prompt v3
 
-Not run yet: the first match hit the Claude subscription's usage limit at tick 1. The runner aborted it as `aborted: usage_limit`, the batch stopped, and `report` skips it. Rerun when the limit resets:
+The first attempt hit the Claude subscription's usage limit at tick 1; the runner aborted it (`aborted: usage_limit`) and `report` skips it. Rerun after the limit reset:
 
-```bash
-pnpm firebreak batch --seeds 3 --first-seed 11 --yes && pnpm firebreak report
-```
+| Seed | none | perfect | band | subagents |
+|---|---|---|---|---|
+| 11 | 10 | 14 | **43** | −20 |
+| 12 | −41 | −5 | **−4** | −5 |
+| 13 | 5 | −24 | **40** | −60 |
+| **mean** | **−9** | **−5** | **+26** | **−28** |
 
-Budget note: batch 1 (3 four-team matches) used ~2,000 decisions (~$8 at API prices). On the subscription backend that is enough to hit the usage window; plan larger batches on the `api` backend or across several windows.
+- Band scored highest on 2 seeds and tied on the third. Its message-only decisions dropped, and it sent more messages (100–111 per match vs 59–75), sharing more while still acting.
+- **The reference gap did not hold in this batch**: perfect ≈ none on average and below it on seed 13. The same seeds varied a lot between batches (none on seed 13: −52 then +5), so LLM variance per match is large compared to the effects.
+- Likely reasons the "perfect" team is not a real ceiling with LLM agents: its prompts carry everyone's view and orders, and agents tend to herd onto the same visible fire. It remains the right *information* ceiling; it is not a *play-quality* ceiling.
+- The report now computes relative score from the team means (per-seed ratios exploded, e.g. 825% on seed 11).
+
+## 6. Before a public demo
+
+1. Run 10–20 seeds per configuration. With per-match swings of ±50 points, 3 seeds cannot separate the teams reliably. Use the `api` backend or spread batches across usage windows (~2,000 decisions per 3 four-team matches).
+2. Try one batch with a stronger model (open question §14.7): weak play adds noise that hides communication effects.
+3. Look at why `perfect` underperforms (herding, prompt size), e.g. give each agent its own view plus a compact list of teammates' orders instead of the full union.
+4. Keep the showcase honest: pick replays that show the mechanism (idle sub-agent bodies, forecasts that never arrive), not just the biggest score gap.

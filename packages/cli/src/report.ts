@@ -90,7 +90,25 @@ export function writeReport(files?: string[], out?: string): string {
   const labels = new Map(scored.flatMap((m) => m.worlds.map((w) => [w.team, w.label] as const)));
   const backends = [...new Set(scored.map((m) => m.llm))];
 
+  const meanScore = (team: string) => {
+    const xs = scored.flatMap((x) => x.worlds.filter((w) => w.team === team).map((w) => w.score));
+    return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN;
+  };
+  const noneTeam = teams.find((t) => t === "none" || t === "bots-none");
+  const perfectTeam = teams.find((t) => t === "perfect" || t === "bots-perfect");
   const rows = METRICS.map((m) => {
+    if (m.key === "relative_score") {
+      // From the means: per-seed ratios explode when perfect ≈ none on a seed.
+      const base = noneTeam ? meanScore(noneTeam) : NaN;
+      const top = perfectTeam ? meanScore(perfectTeam) : NaN;
+      const rel = teams.map((t) =>
+        Number.isFinite(base) && Number.isFinite(top) && top !== base
+          ? (meanScore(t) - base) / (top - base)
+          : NaN,
+      );
+      const best = Math.max(...rel.filter(Number.isFinite));
+      return `<tr><th>${m.label} (from means)</th>${rel.map((r) => (Number.isFinite(r) ? `<td class="${r === best && rel.length > 1 ? "best" : ""}">${m.fmt(r)}</td>` : "<td>–</td>")).join("")}</tr>`;
+    }
     const cells = teams.map((t) => {
       const xs = scored
         .flatMap((x) => x.worlds.filter((w) => w.team === t).map((w) => w[m.key] as number | null))
@@ -130,7 +148,7 @@ th:first-child,td:first-child{text-align:left}thead th{font-weight:700}td.best{b
 ${backends.length > 1 ? `<p><b>Warning:</b> these matches used different LLM backends; compare within one backend only.</p>` : ""}
 <h2>Summary (mean ± standard deviation across seeds)</h2>
 <div class="wrap"><table><thead><tr><th>Metric</th>${teams.map((t) => `<th>${esc(labels.get(t) ?? t)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>
-<p class="muted">Relative score = (team − no-communication) / (perfect − no-communication): the share of the possible coordination gain a team captured. Highlighted cells are the best mean per metric.</p>
+<p class="muted">Relative score = (mean team − mean no-communication) / (mean perfect − mean no-communication): the share of the possible coordination gain a team captured. It is only meaningful when the perfect team clearly beats the no-communication team. Highlighted cells are the best mean per metric.</p>
 <h2>Scores per seed</h2>
 <div class="wrap"><table><thead><tr><th>Seed</th>${teams.map((t) => `<th>${esc(labels.get(t) ?? t)}</th>`).join("")}<th>Match</th></tr></thead><tbody>${perSeed}</tbody></table></div>
 ${skipped.length ? `<h2>Excluded</h2><ul>${skipped.map((m) => `<li>${esc(m.match_id)}: ${esc(m.abort_reason ?? m.status)}</li>`).join("")}</ul>` : ""}
