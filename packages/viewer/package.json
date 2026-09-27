@@ -1,0 +1,19 @@
+{
+  "name": "@firebreak/viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@firebreak/engine": "workspace:*",
+    "pixi.js": "^8.13.2"
+  },
+  "devDependencies": {
+    "vite": "^7.1.9",
+    "vite-plugin-singlefile": "^2.3.0"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "@firebreak/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@firebreak/engine": "workspace:*", "@firebreak/recorder": "workspace:*", "@anthropic-ai/sdk": "^0.128.0", "@anthropic-ai/claude-agent-sdk": "^0.3.283", "zod": "^4.1.12", "ws": "^8.18.3", "yaml": "^2.8.1" }
+}

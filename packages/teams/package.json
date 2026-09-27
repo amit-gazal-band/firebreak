@@ -1,0 +1,8 @@
+{
+  "name": "@firebreak/teams",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@firebreak/engine": "workspace:*", "@firebreak/runtime": "workspace:*", "@band-ai/sdk": "^0.4.7" }
+}

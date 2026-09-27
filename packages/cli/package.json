@@ -1,0 +1,8 @@
+{
+  "name": "@firebreak/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@firebreak/engine": "workspace:*", "@firebreak/recorder": "workspace:*", "@firebreak/runtime": "workspace:*", "@firebreak/teams": "workspace:*", "yaml": "^2.8.1" }
+}

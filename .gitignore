@@ -4,3 +4,4 @@ runs/
 .env
 *.sqlite
 .DS_Store
+band_agents.yaml
