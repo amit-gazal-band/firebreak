@@ -67,14 +67,22 @@ export function step(scn: Scenario, prev: WorldState, orders: OrderBatch = {}): 
     a.order_status = "active";
     a.order_issued_tick = t;
     a.block_reason = null;
+    a.block_detail = null;
     a.progress = 0;
   }
 
   const fireAt = (p: Vec): Fire | undefined => s.fires.find((f) => eq(f.pos, p));
-  const block = (a: AgentState, reason: BlockReason) => {
+  const block = (a: AgentState, reason: BlockReason, detail?: string) => {
     a.order_status = "blocked";
     a.block_reason = reason;
-    events.push({ type: "order_blocked", agent: a.id, order: a.order!, reason });
+    a.block_detail = detail ?? null;
+    events.push({
+      type: "order_blocked",
+      agent: a.id,
+      order: a.order!,
+      reason,
+      ...(detail ? { detail } : {}),
+    });
   };
   const done = (a: AgentState) => {
     a.order_status = "done";
@@ -89,7 +97,7 @@ export function step(scn: Scenario, prev: WorldState, orders: OrderBatch = {}): 
     if (goal === "invalid") continue; // handled in the ability phase
     const path = findPath(s, a.role, a.pos, goal, burning);
     if (path === null) {
-      block(a, "no_path");
+      block(a, "no_path", explainNoPath(s, a, goal, burning));
       continue;
     }
     if (path.length === 0) continue;
@@ -331,6 +339,28 @@ export function step(scn: Scenario, prev: WorldState, orders: OrderBatch = {}): 
     events.push({ type: "match_ended", reason: "cleared" });
   }
   return { state: s, events };
+}
+
+/** Why there is no path: the first debris or fire on the path that would exist without it. */
+function explainNoPath(
+  s: WorldState,
+  a: AgentState,
+  goal: (p: Vec) => boolean,
+  burning: Set<number>,
+): string {
+  const withoutDebris: WorldState = { ...s, tiles: s.tiles.map((k) => (k === "debris" ? "road" : k)) };
+  const viaDebris = findPath(withoutDebris, a.role, a.pos, goal, burning);
+  if (viaDebris) {
+    const d = viaDebris.find((p) => tileAt(s, p) === "debris");
+    if (d) return `debris at (${d[0]},${d[1]}) blocks the way; the engineer can clear it`;
+  }
+  const viaFire = findPath(s, a.role, a.pos, goal, new Set());
+  if (viaFire) {
+    const f = viaFire.find((p) => burning.has(idx(s.size, p)));
+    if (f) return `fire at (${f[0]},${f[1]}) blocks the way; wait for it to be put out or go around`;
+  }
+  if (s.bridge_collapsed) return "the bridge has collapsed; the river cannot be crossed";
+  return a.role === "rescuer" ? "no road leads there" : "that place cannot be reached";
 }
 
 function nextToWater(s: WorldState, p: Vec): boolean {

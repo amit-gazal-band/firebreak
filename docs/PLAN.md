@@ -6,6 +6,21 @@ Build order: **engine → recording/replay → viewer → LLM agents → real te
 
 Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 
+## Status (2026-09-27)
+
+| Milestone | Status | Notes |
+|---|---|---|
+| M0 Scaffold | done | pnpm workspace, strict TS, Vitest, ESLint, Prettier, CI |
+| M1 Engine | done | deterministic, shared per-tile randomness, scripted bots |
+| M2 Recorder and replay core | done | one SQLite file per match (`node:sqlite`), config stored with it, `verify` |
+| M3 Viewer | done | Canvas 2D instead of PixiJS; single-file build |
+| M4 LLM runtime and reference teams | done | both backends; `claude-code` tuned to ~4 s/decision |
+| M5 Tune the game | first pass | bot sweep + prompt v2; gap confirmed on seed 5; batch in docs/TUNING.md |
+| M6 Band team | done | real Band rooms; delivery semantics measured |
+| M7 Sub-agent team | done | orchestrator + spawn/report, hub-and-spoke in the viewer |
+| M8 Metrics and batch | done | metrics as SQL over recordings; `batch`, `report` |
+| M9 Demo polish | partly | `export` works; showcase seeds still to pick |
+
 ---
 
 ## v0: Band vs sub-agents, plus reference teams

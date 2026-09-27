@@ -2,7 +2,7 @@
 
 > A live, replayable game that compares how well teams of AI agents coordinate when the **only** difference between them is how they communicate.
 
-Status: draft v0.1 · Owner: Amit Gazal
+Status: v0.2 (v0 implemented) · Owner: Amit Gazal
 
 ---
 
@@ -51,7 +51,7 @@ A team of 5 AI firefighters defends a town from spreading wildfires for 60 ticks
 | Scout | 1 | 2 | 5 | **The only role that receives the wind forecast** | Can't fight fires, clear debris, or rescue |
 | Firefighter | 2 | 1 | 2 | Extinguish an adjacent fire (uses 1 water), refill next to the lake | Carries 3 water |
 | Engineer | 1 | 1 | 2 | Clear debris (2 ticks), build a firebreak on grass/forest (1 tick) | Can't fight fires |
-| Rescuer | 1 | 1 | 2 | Evacuate an adjacent civilian (1 tick) | Can't pass debris |
+| Rescuer | 1 | 2 | 2 | Evacuate an adjacent civilian (1 tick) | Drives on roads and the bridge only; can't pass debris |
 
 Every role is missing something another role has, so the team has to share information to do well.
 
@@ -62,23 +62,26 @@ Agents issue **orders**, not single steps. The engine carries out the order each
 | Order | Roles | Completes when |
 |---|---|---|
 | `move_to(x, y)` | all | arrived (engine pathfinding over passable tiles) |
-| `extinguish(x, y)` | firefighter | fire out, out of water, or target not adjacent |
-| `refill()` | firefighter | full (needs to be next to water) |
+| `extinguish(x, y)` | firefighter | fire out, or out of water |
+| `refill()` | firefighter | full |
 | `clear_debris(x, y)` | engineer | cleared |
 | `build_firebreak(x, y)` | engineer | built |
 | `rescue(civilian_id)` | rescuer | evacuated |
 | `wait()` | all | the next order arrives |
 
-An order that arrives before a tick boundary takes effect on that tick. A new order replaces the current one.
+- Orders that act on a target (`extinguish`, `refill`, `clear_debris`, `build_firebreak`, `rescue`) first move the agent next to the target (8-neighbour), then act.
+- A `move_to` onto a tile the agent cannot stand on (water, a house, off-road for the rescuer) is redirected to the nearest tile it can stand on, and the tool result says so. Models misread grid coordinates often; rejecting those orders cost a retry turn each time.
+- An order that arrives before a tick boundary takes effect on that tick. A new order replaces the current one.
+- A blocked order carries a reason and a human-readable detail, e.g. `no_path: debris at (17,6) blocks the way; the engineer can clear it`.
 
 ### 4.4 World dynamics (applied each tick, in this order)
 
 1. **Orders** are applied (movement, then abilities).
 2. **Joint check.** An intensity-3 fire can only be reduced if **two firefighters extinguish it in the same tick** (it then drops by 2). One firefighter alone has no effect on it.
-3. **Fire growth.** A burning tile gains +1 intensity (max 3) every 4 ticks unless it was fought during that time.
+3. **Fire growth.** A burning tile gains +1 intensity (max 3) every 5 ticks unless it was fought during that time.
 4. **Fire spread.** Each burning tile may ignite its 4 neighbours. Probability = `base × fuel(tile) × wind(direction)`. Downwind ×3, upwind ×0.3. `forest` fuel > `grass` > `house`. `firebreak`, `road`, `water`, `ash` don't burn.
 5. **Burn-out.** A tile that has been burning for 10 ticks becomes `ash`. A house that stays at intensity 3 for 3 ticks is destroyed.
-6. **Civilians.** A civilian dies if fire reaches its tile or its deadline passes (12 ticks after it appears).
+6. **Civilians.** A civilian dies if fire reaches its tile or its deadline passes (15 ticks after it appears).
 7. **Scheduled events** fire (see 4.5).
 8. **Observations** are computed and delivered.
 
@@ -153,6 +156,8 @@ At most one LLM call per agent is in flight. Triggers that arrive during a call 
 - The wind changed (or, for the scout, a new forecast arrived).
 - Heartbeat: 3 ticks passed with no other trigger.
 
+At most 3 decisions per agent per tick. At real model latency (~4 s per decision) this never triggers; it prevents runaway loops such as message ping-pong in virtual time.
+
 ### 6.3 LLM backends
 
 The runtime calls models through one interface, `LlmClient.decide(prompt, tools) → { toolCalls, usage, latency }`. It has two backends:
@@ -160,7 +165,13 @@ The runtime calls models through one interface, `LlmClient.decide(prompt, tools)
 | Backend | Auth | Implementation | Notes |
 |---|---|---|---|
 | `api` | `ANTHROPIC_API_KEY` | `@anthropic-ai/sdk` Messages API with tool use | Lowest latency, billed per token |
-| `claude-code` | Claude subscription: the local `claude` login, or `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` | `@anthropic-ai/claude-agent-sdk` `query()`, with a custom `systemPrompt`, built-in tools disabled, and game tools served through `createSdkMcpServer` | Not billed per token. Subject to the subscription's usage limits. Higher per-call overhead |
+| `claude-code` (default) | Claude subscription: the local `claude` login, or `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` | `@anthropic-ai/claude-agent-sdk` `query()`, with a custom `systemPrompt`, built-in tools disabled, and game tools served through `createSdkMcpServer` | Not billed per token. Subject to the subscription's usage limits. ~4 s per decision |
+
+Settings the `claude-code` backend needs to behave like the `api` backend (measured, see docs/TUNING.md):
+- `thinking: { type: "disabled" }`. Claude Code enables adaptive thinking by default, which made decisions take 10–40 s.
+- `strictMcpConfig: true` and `settingSources: []`. Otherwise the account's claude.ai connectors and user settings are loaded, adding ~80k tokens to some calls.
+- `ANTHROPIC_API_KEY` and parent `CLAUDE_CODE_*` variables are removed from the subprocess environment, so a subscription run can never bill an API key.
+- The decision returns as soon as the tool results come back without an error (like the `api` backend); the subprocess is shut down in the background.
 
 - **One backend per match.** All teams in a match use the same backend, so the comparison stays fair. The backend is recorded with the match (§8.2).
 - **Compare within a backend.** Latency differs between backends, so reports compare matches from the same backend only (and the same `tick_ms`).
@@ -211,8 +222,11 @@ No communication tools. Each agent's observation is the **union** of all teammat
 ### 7.3 `band`
 - 5 Band agents (external agents on the platform), connected with `@band-ai/sdk` using `GenericAdapter` as the transport only. The LLM loop stays ours, identical to the other teams.
 - A team room containing all 5 agents is created at setup.
-- Tools exposed: `send_message(room, text, mentions[])`, `create_room(topic, participants[])`, `add_participant(room, agent)`. They map to `band_send_message`, `band_create_chatroom`, and `band_add_participant`.
-- Delivery follows Band's own semantics (room membership plus @mentions).
+- Tools exposed: `send_message(room, text, mentions[])`, `create_room(name, participants[])`, `add_participant(room, agent)`. They map to the Band REST calls behind `band_send_message`, `band_create_chatroom`, and `band_add_participant`.
+- Delivery follows Band's own semantics, measured on the platform: **only @mentioned room members receive a message, and every message needs at least one mention** (a message without one is rejected). `mentions: ["all"]` expands to every other room member. The send response lists the recipients, which are recorded as the message's `to`.
+- Measured latency from send to delivery: ~0.4 s (up to ~1 s at match start).
+- Rooms are real Band rooms and stay in the account after the match, so a match's conversation can also be read in the Band app.
+- Credentials: `band_agents.yaml` (git-ignored), one external agent per role.
 
 ### 7.4 `subagents`
 Follows the real sub-agent pattern (Claude Agent SDK / Task tool, LangGraph supervisor, agents-as-tools).
@@ -224,6 +238,8 @@ Follows the real sub-agent pattern (Claude Agent SDK / Task tool, LangGraph supe
 - **Report:** the sub-agent's text **plus an automatic structured list of everything it saw** (generous on purpose).
 - **Faithful limits:** no incoming channel while running, no talking between peers, no interrupting.
 - Bodies with no live sub-agent keep their last order, then wait.
+- The orchestrator is also woken by a heartbeat every 3 ticks while any body has no sub-agent, and its prompt tells it to keep every body busy (generous on purpose).
+- Spawns and reports are recorded as messages (`channel: "spawn"` and `"report"`), so the viewer draws them as hub-and-spoke lines to the HQ icon, and the metrics can measure the orchestrator's queue time.
 
 ### 7.5 `slack` (v1)
 - 5 Slack bot users in one workspace, one `#team-<match>` channel, Socket Mode (real-time push).
@@ -295,7 +311,8 @@ The viewer only ever consumes an **event stream**. Live mode is a websocket that
 - **Counters** under each board: score, $ spent, messages, stale actions, idle ticks, missed joint tasks.
 - **Inspector:** click an agent to see its latest observation, its prompt's message window, and its last LLM response.
 - **Controls:** play/pause, speed (0.5–10×), timeline scrubber with event markers, step ±1 tick, choose which teams are shown.
-- Stack: Vite + TypeScript + PixiJS.
+- Stack: Vite + TypeScript + Canvas 2D (six 20×20 boards are far below what needs WebGL). The build is one self-contained `index.html`, which the server serves and `export` embeds a recording into.
+- URL parameters: `?rec=<file>`, `?live`, `?t=<seconds>`, `?paused`, `?speed=<n>`.
 
 ## 10. Metrics
 
@@ -330,14 +347,17 @@ ticks: 60
 tick_ms: 5000
 teams: [none, perfect, band, subagents]
 llm:
-  backend: api                  # api | claude-code
+  backend: claude-code          # claude-code (subscription) | api (ANTHROPIC_API_KEY)
   model: claude-haiku-4-5-20251001
   temperature: 0.2
   max_turns_per_decision: 3
 budget: { usd: 5.00, tokens: 10000000 }
 map: { size: 20, houses: [8, 12], civilians: [4, 6], wind_shifts: [2, 3] }
-fire: { base_spread: 0.08, growth_every: 4, burnout_ticks: 10 }
-agent: { message_window: 30, heartbeat_ticks: 3 }
+fire: { base_spread: 0.05, growth_every: 5, burnout_ticks: 10, house_destroy_ticks: 3 }
+rules: { civilian_deadline: 15, forecast_lead: 6, water_capacity: 3, clear_debris_ticks: 2 }
+band: { agents_file: band_agents.yaml, rest_url: https://app.band.ai, ws_url: wss://app.band.ai/api/v1/socket/websocket }
+record: { dir: runs, prompts: true }
+agent: { message_window: 30, heartbeat_ticks: 3, order_log: 5, max_decisions_per_tick: 3 }
 subagents: { max_lifetime_ticks: 8 }
 ```
 
@@ -345,7 +365,7 @@ Every knob in section 4 is configurable, so difficulty can be tuned.
 
 ## 12. Tech stack and repo layout
 
-TypeScript, Node 22, pnpm workspaces, Vitest (same stack as `@band-ai/sdk`).
+TypeScript, Node 22.13+, pnpm workspaces, Vitest, `node:sqlite` for recordings (same stack as `@band-ai/sdk`).
 
 ```
 firebreak/
@@ -370,9 +390,15 @@ firebreak/
 
 ## 14. Open questions
 
-1. **Band delivery semantics.** Do room members that weren't @mentioned receive a message? This decides how the Band team handles broadcast vs targeted messages.
-2. **Band accounts.** Which Band environment and organisation should host the match agents? 5 agents per concurrent Band team, created once and reused across matches?
-3. **Sub-agent implementation.** Implement the spawn/return pattern ourselves (identical LLM client, cleanest comparison), or run it on the real Claude Agent SDK (more credible to outsiders, but a different loop)? Current proposal: our own implementation, with an Agent SDK variant as a later check.
-4. **Tick length.** Is 5 s right? It depends on real model latency. Settle it during tuning (PLAN M5).
+Answered while building v0:
+
+1. ~~Band delivery semantics.~~ Only @mentioned members receive a message; at least one mention is required (§7.3).
+2. ~~Band accounts.~~ Five external agents in the owner's account (`Firebreak Scout`, `FF1`, `FF2`, `Engineer`, `Rescuer`), reused across matches.
+3. ~~Sub-agent implementation.~~ Our own spawn/return implementation on the shared LLM client (§7.4). An Agent SDK variant is still a possible later check.
+4. ~~Tick length.~~ 5 s works: decisions take ~4 s on both backends' current settings (docs/TUNING.md).
+
+Still open:
+
 5. **Slack and Linear workspaces.** Dedicated sandbox workspaces for v1?
 6. **Publishing.** Open-source the repo so outsiders can check fairness? That affects what can be committed (no internal URLs or keys).
+7. **Model.** Haiku 4.5 plays reasonably with the v2 role playbooks. A stronger model may widen the gaps between teams; worth one batch before a public demo.

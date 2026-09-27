@@ -13,6 +13,7 @@ export interface Observation {
     order: string | null;
     order_status: OrderStatus;
     block_reason?: string;
+    block_detail?: string;
   };
   wind: Wind;
   forecast?: { tick: number; wind: Wind }[];
@@ -86,6 +87,7 @@ function buildObservation(
       order: formatOrder(self.order),
       order_status: self.order_status,
       ...(self.block_reason ? { block_reason: self.block_reason } : {}),
+      ...(self.block_detail ? { block_detail: self.block_detail } : {}),
     },
     wind: s.wind,
     visible: {

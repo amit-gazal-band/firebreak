@@ -76,8 +76,9 @@ export class LlmAgent {
         this.logOrder(`t${state.tick} ${formatOrder(e.order)} → done`);
       }
       if (e.type === "order_blocked" && e.agent === this.id) {
-        this.reasons.add(`your order ${formatOrder(e.order)} is blocked (${e.reason})`);
-        this.logOrder(`t${state.tick} ${formatOrder(e.order)} → blocked: ${e.reason}`);
+        const why = e.detail ? `${e.reason}: ${e.detail}` : e.reason;
+        this.reasons.add(`your order ${formatOrder(e.order)} is blocked (${why})`);
+        this.logOrder(`t${state.tick} ${formatOrder(e.order)} → blocked: ${why}`);
       }
     }
     const v = obs.visible;

@@ -38,6 +38,8 @@ export interface AgentState {
   order_status: OrderStatus;
   order_issued_tick: number;
   block_reason: BlockReason | null;
+  /** Human-readable cause of a block, e.g. which debris or fire is in the way. */
+  block_detail: string | null;
   /** Ticks of work already spent on a multi-tick order (e.g. clear_debris). */
   progress: number;
 }
@@ -126,7 +128,7 @@ export interface GameConfig {
 
 export type WorldEvent =
   | { type: "order_done"; agent: string; order: Order }
-  | { type: "order_blocked"; agent: string; order: Order; reason: BlockReason }
+  | { type: "order_blocked"; agent: string; order: Order; reason: BlockReason; detail?: string }
   | { type: "moved"; agent: string; from: Vec; to: Vec }
   | { type: "extinguished"; pos: Vec; by: string[] }
   | { type: "fire_reduced"; pos: Vec; intensity: number; by: string[] }

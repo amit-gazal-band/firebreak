@@ -190,6 +190,7 @@ export function createScenario(seed: number, config: GameConfig = mergeGameConfi
     order_status: "none",
     order_issued_tick: 0,
     block_reason: null,
+    block_detail: null,
     progress: 0,
   }));
 
