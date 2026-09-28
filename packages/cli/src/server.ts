@@ -13,7 +13,7 @@ import {
 } from "@firebreak/recorder";
 import { WebSocketServer, type WebSocket } from "ws";
 import { REPO_ROOT, VIEWER_DIST } from "./paths";
-import { RUNS_DIR } from "./run";
+import { RECORDING_DIRS } from "./run";
 
 function newestMtime(dir: string): number {
   let max = 0;
@@ -85,8 +85,9 @@ function send(res: ServerResponse, code: number, body: string, type = "applicati
 
 function recordingPath(name: string): string | null {
   const file = basename(decodeURIComponent(name));
-  const p = join(RUNS_DIR, file);
-  return file.endsWith(".sqlite") && existsSync(p) ? p : null;
+  if (!file.endsWith(".sqlite")) return null;
+  for (const dir of RECORDING_DIRS) if (existsSync(join(dir, file))) return join(dir, file);
+  return null;
 }
 
 export async function startServer(opts: {
@@ -112,7 +113,7 @@ export async function startServer(opts: {
         );
       }
       if (parts[1] === "recordings" && parts.length === 2)
-        return send(res, 200, JSON.stringify(listRecordings(RUNS_DIR)));
+        return send(res, 200, JSON.stringify(RECORDING_DIRS.flatMap((d) => listRecordings(d))));
       if (parts[1] === "recordings" && parts[2]) {
         const p = recordingPath(parts[2]);
         if (!p) return send(res, 404, '{"error":"not found"}');

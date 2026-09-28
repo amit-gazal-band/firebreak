@@ -5,3 +5,4 @@ runs/
 *.sqlite
 .DS_Store
 band_agents.yaml
+!recordings/*.sqlite

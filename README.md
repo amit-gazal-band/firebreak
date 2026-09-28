@@ -49,6 +49,10 @@ pnpm firebreak run --config-from <match>  # same configuration as an old match
 
 Viewer keys: space play/pause, ←/→ step a tick, 1–5 speed, click an agent to inspect what it saw and decided.
 
+## Recorded matches
+
+`recordings/` has curated full matches you can replay right after cloning, e.g. `pnpm firebreak replay 20260927-184427-s13-mmr7.sqlite`. See [recordings/README.md](recordings/README.md). New matches go to `runs/` (git-ignored).
+
 ## Many seeds
 
 ```bash

@@ -1,7 +1,8 @@
 import { parseArgs } from "node:util";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { listRecordings } from "@firebreak/recorder";
-import { RUNS_DIR, loadResolvedConfig, relRuns, runMatch } from "./run";
+import { RECORDING_DIRS, RUNS_DIR, loadResolvedConfig, relRuns, runMatch } from "./run";
 import { verifyRecording } from "./verify";
 
 const HELP = `firebreak — multi-agent communication showdown
@@ -16,13 +17,14 @@ Usage:
   firebreak batch --seeds N [--config FILE] [--first-seed N] [--set key=value]... [--yes]
   firebreak report [MATCH...] [--out FILE]
 
-MATCH is a path to a runs/*.sqlite file (or its file name inside runs/).
+MATCH is a path to a .sqlite recording, or its file name inside runs/ or recordings/.
 `;
 
 export function matchPath(p: string): string {
-  return p.includes("/") || p.endsWith(".sqlite")
-    ? resolve(process.env.INIT_CWD ?? process.cwd(), p.includes("/") ? p : `runs/${p}`)
-    : resolve(RUNS_DIR, `${p}.sqlite`);
+  if (p.includes("/")) return resolve(process.env.INIT_CWD ?? process.cwd(), p);
+  const file = p.endsWith(".sqlite") ? p : `${p}.sqlite`;
+  for (const dir of RECORDING_DIRS) if (existsSync(resolve(dir, file))) return resolve(dir, file);
+  return resolve(RUNS_DIR, file);
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -106,7 +108,7 @@ async function main(argv: string[]): Promise<number> {
       return r.ok ? 0 : 1;
     }
     case "list": {
-      for (const s of listRecordings(RUNS_DIR)) {
+      for (const s of RECORDING_DIRS.flatMap((d) => listRecordings(d))) {
         console.log(
           `${s.file}  ${s.status}${s.abort_reason ? `(${s.abort_reason})` : ""}  ` +
             s.teams.map((t) => `${t.team}:${t.score ?? "-"}`).join("  "),

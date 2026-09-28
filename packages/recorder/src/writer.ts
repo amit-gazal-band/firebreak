@@ -136,7 +136,9 @@ export class RecordingWriter implements FrameSink {
     this.db.prepare("INSERT INTO frame_log (kind, ref) VALUES ('end', '')").run();
   }
 
+  /** Merge the write-ahead log so the recording is one self-contained file (no -wal/-shm). */
   close(): void {
+    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode = DELETE;");
     this.db.close();
   }
 }

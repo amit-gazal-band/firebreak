@@ -108,3 +108,7 @@ export function relRuns(file: string): string {
 
 export type { StreamFrame };
 export const RUNS_DIR = join(REPO_ROOT, "runs");
+/** Curated recordings committed to the repo. */
+export const RECORDINGS_DIR = join(REPO_ROOT, "recordings");
+/** Where to look for a recording by file name: local runs first, then the committed ones. */
+export const RECORDING_DIRS = [RUNS_DIR, RECORDINGS_DIR];
