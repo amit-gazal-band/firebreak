@@ -10,6 +10,7 @@ const HELP = `firebreak — multi-agent communication showdown
 Usage:
   firebreak run [--config FILE] [--seed N] [--teams a,b,c] [--set key=value]... [--virtual] [--config-from MATCH] [--live] [--port N]
   firebreak verify MATCH
+  firebreak metrics MATCH                 per-team metrics as JSON (SPEC §10)
   firebreak list
   firebreak serve [--port N]              viewer for recordings (and live matches)
   firebreak replay MATCH [--port N]       open a recording in the viewer
@@ -106,6 +107,13 @@ async function main(argv: string[]): Promise<number> {
         );
       console.log(r.ok ? "verified" : "verification FAILED");
       return r.ok ? 0 : 1;
+    }
+    case "metrics": {
+      const p = positionals[0];
+      if (!p) throw new Error("metrics needs a MATCH");
+      const { computeMetrics } = await import("@firebreak/recorder");
+      console.log(JSON.stringify(computeMetrics(matchPath(p)), null, 2));
+      return 0;
     }
     case "list": {
       for (const s of RECORDING_DIRS.flatMap((d) => listRecordings(d))) {
