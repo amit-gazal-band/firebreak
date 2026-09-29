@@ -1,4 +1,5 @@
 import {
+  formatOrder,
   teamVision,
   type AgentState,
   type Role,
@@ -7,7 +8,8 @@ import {
   type Vec,
   type WorldState,
 } from "@firebreak/engine";
-import type { MessageView } from "./timeline";
+import { ROLE_ICON, drawBadge, drawIcon, type IconName } from "./icons";
+import { SCORE_LABEL, type MessageView, type ScoreEntry } from "./timeline";
 
 const TILE: Record<TileKind, string> = {
   grass: "#9dbb6f",
@@ -29,10 +31,25 @@ export const ROLE_COLOR: Record<Role, string> = {
   rescuer: "#f7f7f2",
 };
 
-const ROLE_LETTER: Record<Role, string> = { scout: "S", firefighter: "F", engineer: "E", rescuer: "R" };
-
 /** Non-body participants drawn at a fixed spot (the sub-agent orchestrator). */
 export const HQ_ID = "orchestrator";
+export const HQ_COLOR = "#c792ea";
+
+/** How an agent is drawn everywhere (board, graph, feed, inspector): disc colour, icon, FF badge. */
+export function agentLook(id: string, role: Role | null): { icon: IconName; color: string; badge?: string } {
+  if (id === HQ_ID || !role) return { icon: "hq", color: HQ_COLOR };
+  const badge = id === "ff1" ? "1" : id === "ff2" ? "2" : undefined;
+  return { icon: ROLE_ICON[role], color: ROLE_COLOR[role], ...(badge ? { badge } : {}) };
+}
+
+/** Role of an agent id on the standard team, for places that only have the id. */
+export function roleOf(id: string): Role | null {
+  if (id === "scout") return "scout";
+  if (id.startsWith("ff")) return "firefighter";
+  if (id === "engineer") return "engineer";
+  if (id === "rescuer") return "rescuer";
+  return null;
+}
 
 export interface BoardGeometry {
   x: number;
@@ -50,7 +67,12 @@ export interface DrawInput {
   messages: MessageView[];
   holdMs: number;
   selected: string | null;
+  hover: string | null;
   showHq: boolean;
+  /** Draw each agent's current order as a dashed line to its target (SPEC §9.4). */
+  orderLines: boolean;
+  /** Scoring events to float up from their tile, with age 0..1 (SPEC §9.5). */
+  popups: { entry: ScoreEntry; age: number }[];
 }
 
 export interface HitTarget {
@@ -72,6 +94,26 @@ export function agentPos(cur: WorldState, next: WorldState | null, alpha: number
   // Ease so movement reads as a step, not a slide.
   const e = alpha < 0.5 ? 2 * alpha * alpha : 1 - (-2 * alpha + 2) ** 2 / 2;
   return [lerp(a.pos[0], b.pos[0], e), lerp(a.pos[1], b.pos[1], e)];
+}
+
+/**
+ * Stack floating labels (centre x, half width, wanted y) so none overlaps an earlier one: each
+ * label that would collide moves up one line above it. Returns the y to draw each label at.
+ */
+export function stackLabels(labels: { x: number; half: number; y: number }[], lineH: number): number[] {
+  const placed: { x0: number; x1: number; y: number }[] = [];
+  return labels.map(({ x, half, y }) => {
+    for (let moved = true; moved;) {
+      moved = false;
+      for (const r of placed)
+        if (x - half < r.x1 && x + half > r.x0 && Math.abs(y - r.y) < lineH) {
+          y = r.y - lineH;
+          moved = true;
+        }
+    }
+    placed.push({ x0: x - half, x1: x + half, y });
+    return y;
+  });
 }
 
 export function drawBoard(ctx: CanvasRenderingContext2D, g: BoardGeometry, d: DrawInput): HitTarget[] {
@@ -175,11 +217,11 @@ export function drawBoard(ctx: CanvasRenderingContext2D, g: BoardGeometry, d: Dr
     const [cx, cy] = center(cv.pos);
     const total = Math.max(1, cv.deadline - cv.appeared);
     const left = Math.max(0, cv.deadline - cur.tick) / total;
-    ctx.fillStyle = "#fff";
+    ctx.fillStyle = "rgba(27,30,43,0.55)";
     ctx.beginPath();
-    ctx.arc(cx, cy - c * 0.12, c * 0.14, 0, Math.PI * 2);
+    ctx.arc(cx, cy, c * 0.34, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillRect(cx - c * 0.1, cy, c * 0.2, c * 0.25);
+    drawIcon(ctx, "civilian", cx, cy, c * 0.62, "#fff");
     ctx.strokeStyle = left > 0.4 ? "#7CFC9A" : left > 0.2 ? "#ffd166" : "#ff4d6d";
     ctx.lineWidth = Math.max(2, c * 0.1);
     ctx.beginPath();
@@ -190,17 +232,13 @@ export function drawBoard(ctx: CanvasRenderingContext2D, g: BoardGeometry, d: Dr
   const hq: Vec = [g.x + g.size - c * 1.1, g.y + c * 1.1];
   if (d.showHq) {
     ctx.fillStyle = "rgba(20,24,36,0.85)";
-    ctx.strokeStyle = "#c792ea";
+    ctx.strokeStyle = d.selected === HQ_ID ? "#fff" : HQ_COLOR;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.roundRect(hq[0] - c * 0.9, hq[1] - c * 0.7, c * 1.8, c * 1.4, 4);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = "#c792ea";
-    ctx.font = `bold ${Math.floor(c * 0.55)}px system-ui`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("HQ", hq[0], hq[1] + 1);
+    drawIcon(ctx, "hq", hq[0], hq[1], c * 1.15, HQ_COLOR);
   }
 
   const posOf = (id: string): Vec | null => {
@@ -209,20 +247,25 @@ export function drawBoard(ctx: CanvasRenderingContext2D, g: BoardGeometry, d: Dr
     return p ? center(p) : null;
   };
 
-  // Order intent lines (faint).
-  for (const a of cur.agents) {
-    if (a.order_status !== "active" || !a.order || !("x" in a.order)) continue;
-    const from = posOf(a.id);
-    if (!from) continue;
-    const to = center([a.order.x, a.order.y]);
-    ctx.strokeStyle = "rgba(255,255,255,0.28)";
-    ctx.setLineDash([3, 4]);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(from[0], from[1]);
-    ctx.lineTo(to[0], to[1]);
-    ctx.stroke();
-    ctx.setLineDash([]);
+  // Each agent's current order: a dashed line in its role colour to the target, red when blocked.
+  if (d.orderLines) {
+    for (const a of cur.agents) {
+      if (a.order_status !== "active" && a.order_status !== "blocked") continue;
+      const target = orderTarget(cur, a);
+      const from = posOf(a.id);
+      if (!target || !from) continue;
+      const to = center(target);
+      const blocked = a.order_status === "blocked";
+      ctx.strokeStyle = blocked ? "rgba(255,77,109,0.9)" : withAlpha(ROLE_COLOR[a.role], 0.75);
+      ctx.setLineDash([Math.max(2, c * 0.2), Math.max(3, c * 0.25)]);
+      ctx.lineWidth = Math.max(1, c * 0.07);
+      ctx.beginPath();
+      ctx.moveTo(from[0], from[1]);
+      ctx.lineTo(to[0], to[1]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.strokeRect(to[0] - c * 0.3, to[1] - c * 0.3, c * 0.6, c * 0.6);
+    }
   }
 
   // Messages: a line per recipient with a dot travelling from sender to recipient.
@@ -255,6 +298,62 @@ export function drawBoard(ctx: CanvasRenderingContext2D, g: BoardGeometry, d: Dr
   for (const a of cur.agents) drawAgent(ctx, a, posOf(a.id)!, c, a.id === d.selected, hits);
   if (d.showHq) hits.push({ id: HQ_ID, x: hq[0], y: hq[1], r: c });
 
+  // Score pop-ups name the event, rise from the tile and fade within about a tick (SPEC §9.5).
+  // Oldest first, so a later label that would overlap an earlier one stacks above it.
+  const fontPx = Math.max(10, Math.round(c * 0.6));
+  ctx.font = `800 ${fontPx}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = Math.max(2, c * 0.14);
+  ctx.strokeStyle = "rgba(10,12,20,0.85)";
+  const labels = [...d.popups].reverse().flatMap(({ entry, age }) => {
+    if (!entry.pos) return [];
+    const [x, y] = center(entry.pos);
+    const text = SCORE_LABEL[entry.type];
+    const half = ctx.measureText(text).width / 2 + 2;
+    // Clamp to the board so labels near an edge stay readable.
+    const cx = Math.min(Math.max(x, g.x + half), g.x + g.size - half);
+    return [{ entry, age, text, x: cx, half, y: y - c * 0.4 - age * c * 1.4 }];
+  });
+  const ys = stackLabels(labels, fontPx + 2);
+  labels.forEach(({ entry, age, text, x: cx }, i) => {
+    const ty = ys[i]!;
+    ctx.globalAlpha = Math.max(0, 1 - age);
+    ctx.strokeText(text, cx, ty);
+    ctx.fillStyle = entry.delta > 0 ? "#7cfc9a" : "#ff4d6d";
+    ctx.fillText(text, cx, ty);
+    ctx.globalAlpha = 1;
+  });
+
+  // Hover label: the agent's current order.
+  const hovered = d.hover ? cur.agents.find((a) => a.id === d.hover) : undefined;
+  if (hovered) {
+    const p = posOf(hovered.id)!;
+    const text = `${hovered.id}: ${formatOrder(hovered.order) ?? "no order"}${
+      hovered.order_status === "blocked"
+        ? ` ⛔ ${hovered.block_reason ?? "blocked"}`
+        : hovered.order_status === "done"
+          ? " ✓ done"
+          : ""
+    }`;
+    ctx.font = `${Math.max(11, Math.round(c * 0.55))}px system-ui, sans-serif`;
+    const w = ctx.measureText(text).width + c * 0.6;
+    const h = Math.max(16, c * 0.9);
+    const lx = Math.min(Math.max(g.x + 2, p[0] - w / 2), g.x + g.size - w - 2);
+    const ly = p[1] - c * 0.6 - h < g.y ? p[1] + c * 0.6 : p[1] - c * 0.6 - h;
+    ctx.fillStyle = "rgba(20,24,36,0.92)";
+    ctx.strokeStyle = hovered.order_status === "blocked" ? "#ff4d6d" : ROLE_COLOR[hovered.role];
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(lx, ly, w, h, 4);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#e8e9f0";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, lx + c * 0.3, ly + h / 2 + 1);
+  }
+
   ctx.restore();
   return hits;
 }
@@ -267,28 +366,41 @@ function drawAgent(
   selected: boolean,
   hits: HitTarget[],
 ) {
-  const r = c * 0.36;
+  // Larger on small boards so the icon still reads at ~11 px cells (SPEC §9.3).
+  const r = c * (c < 20 ? 0.5 : 0.4);
+  const look = agentLook(a.id, a.role);
   ctx.fillStyle = "rgba(0,0,0,0.35)";
   ctx.beginPath();
   ctx.arc(p[0] + 1, p[1] + 2, r, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = ROLE_COLOR[a.role];
+  ctx.fillStyle = look.color;
   ctx.strokeStyle = selected ? "#fff" : a.order_status === "blocked" ? "#ff4d6d" : "#1b1e2b";
-  ctx.lineWidth = selected ? 3 : 2;
+  ctx.lineWidth = selected || a.order_status === "blocked" ? Math.max(2, c * 0.12) : Math.max(1.5, c * 0.08);
   ctx.beginPath();
   ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = "#1b1e2b";
-  ctx.font = `bold ${Math.floor(c * 0.42)}px system-ui`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(a.id === "ff2" ? "F₂" : a.id === "ff1" ? "F₁" : ROLE_LETTER[a.role], p[0], p[1] + 1);
+  drawIcon(ctx, look.icon, p[0], p[1], r * 1.5, "#1b1e2b");
+  if (look.badge) drawBadge(ctx, p[0] + r * 0.78, p[1] - r * 0.78, Math.max(4, r * 0.42), look.badge);
   if (a.role === "firefighter") {
     for (let i = 0; i < 3; i++) {
       ctx.fillStyle = i < a.water ? "#4d97c7" : "rgba(0,0,0,0.4)";
-      ctx.fillRect(p[0] - r + i * (r * 0.7), p[1] + r + 1, r * 0.55, 3);
+      ctx.fillRect(p[0] - r + i * (r * 0.7), p[1] + r + 1, r * 0.55, Math.max(2, c * 0.12));
     }
   }
   hits.push({ id: a.id, x: p[0], y: p[1], r: r * 1.3 });
+}
+
+/** The tile an order points at, or null (refill, wait). */
+export function orderTarget(s: WorldState, a: AgentState): Vec | null {
+  const o = a.order;
+  if (!o) return null;
+  if ("x" in o) return [o.x, o.y];
+  if (o.type === "rescue") return s.civilians.find((cv) => cv.id === o.civilian_id)?.pos ?? null;
+  return null;
+}
+
+function withAlpha(hex: string, a: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 }

@@ -36,7 +36,6 @@ const METRICS: {
   better: "high" | "low" | null;
 }[] = [
   { key: "score", label: "Score", fmt: (v) => v.toFixed(1), better: "high" },
-  { key: "relative_score", label: "Relative score", fmt: (v) => `${(v * 100).toFixed(0)}%`, better: "high" },
   { key: "cost_usd", label: "Cost ($)", fmt: (v) => v.toFixed(3), better: "low" },
   { key: "llm_calls", label: "LLM calls", fmt: (v) => v.toFixed(0), better: null },
   { key: "evacuated", label: "Civilians evacuated", fmt: (v) => v.toFixed(1), better: "high" },
@@ -63,12 +62,53 @@ const METRICS: {
     better: "low",
   },
   {
+    key: "comm_concentration",
+    label: "Communication concentration",
+    fmt: (v) => `${(v * 100).toFixed(0)}%`,
+    better: null,
+  },
+  {
     key: "forecast_shared_lead_ticks",
     label: "Forecast lead shared (ticks)",
     fmt: (v) => v.toFixed(1),
     better: "high",
   },
 ];
+
+const NODE_ORDER = ["scout", "ff1", "ff2", "engineer", "rescuer", "orchestrator"];
+const NODE_LABEL: Record<string, string> = { orchestrator: "HQ" };
+
+/** Mean messages per match for each sender → recipient pair of one team (SPEC §10). */
+function matrixTable(matches: MatchMetrics[], team: string, label: string): string {
+  const worlds = matches.flatMap((m) => m.worlds.filter((w) => w.team === team));
+  const sums = new Map<string, number>();
+  const nodes = new Set<string>();
+  for (const w of worlds)
+    for (const e of w.comm_matrix) {
+      sums.set(`${e.from}>${e.to}`, (sums.get(`${e.from}>${e.to}`) ?? 0) + e.count);
+      nodes.add(e.from).add(e.to);
+    }
+  if (!nodes.size) return `<h3>${esc(label)}</h3><p class="muted">No messages on this team.</p>`;
+  const order = [...nodes].sort(
+    (a, b) => (NODE_ORDER.indexOf(a) + 1 || 99) - (NODE_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b),
+  );
+  const name = (n: string) => esc(NODE_LABEL[n] ?? n);
+  const max = Math.max(...sums.values()) / worlds.length;
+  const body = order
+    .map(
+      (from) =>
+        `<tr><th>${name(from)}</th>${order
+          .map((to) => {
+            const v = (sums.get(`${from}>${to}`) ?? 0) / worlds.length;
+            return v
+              ? `<td style="background:rgba(255,77,109,${((0.6 * v) / max).toFixed(2)})">${v.toFixed(1)}</td>`
+              : `<td class="muted">·</td>`;
+          })
+          .join("")}</tr>`,
+    )
+    .join("");
+  return `<h3>${esc(label)}</h3><div class="wrap"><table class="matrix"><thead><tr><th>from ↓ to →</th>${order.map((n) => `<th>${name(n)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
 
 export function writeReport(files?: string[], out?: string): string {
   const list =
@@ -90,25 +130,7 @@ export function writeReport(files?: string[], out?: string): string {
   const labels = new Map(scored.flatMap((m) => m.worlds.map((w) => [w.team, w.label] as const)));
   const backends = [...new Set(scored.map((m) => m.llm))];
 
-  const meanScore = (team: string) => {
-    const xs = scored.flatMap((x) => x.worlds.filter((w) => w.team === team).map((w) => w.score));
-    return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN;
-  };
-  const noneTeam = teams.find((t) => t === "none" || t === "bots-none");
-  const perfectTeam = teams.find((t) => t === "perfect" || t === "bots-perfect");
   const rows = METRICS.map((m) => {
-    if (m.key === "relative_score") {
-      // From the means: per-seed ratios explode when perfect ≈ none on a seed.
-      const base = noneTeam ? meanScore(noneTeam) : NaN;
-      const top = perfectTeam ? meanScore(perfectTeam) : NaN;
-      const rel = teams.map((t) =>
-        Number.isFinite(base) && Number.isFinite(top) && top !== base
-          ? (meanScore(t) - base) / (top - base)
-          : NaN,
-      );
-      const best = Math.max(...rel.filter(Number.isFinite));
-      return `<tr><th>${m.label} (from means)</th>${rel.map((r) => (Number.isFinite(r) ? `<td class="${r === best && rel.length > 1 ? "best" : ""}">${m.fmt(r)}</td>` : "<td>–</td>")).join("")}</tr>`;
-    }
     const cells = teams.map((t) => {
       const xs = scored
         .flatMap((x) => x.worlds.filter((w) => w.team === t).map((w) => w[m.key] as number | null))
@@ -142,15 +164,19 @@ body{background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,
 h1{margin:0}h1 b{color:var(--accent)}.muted,td span{color:var(--muted)}td span{font-size:12px}
 .wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;margin:12px 0 28px}th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
 th:first-child,td:first-child{text-align:left}thead th{font-weight:700}td.best{background:var(--best);font-weight:700}
+table.matrix{width:auto}
 </style></head><body>
 <h1>FIRE<b>BREAK</b> report</h1>
 <p class="muted">${scored.length} completed match${scored.length === 1 ? "" : "es"}${skipped.length ? `, ${skipped.length} aborted and excluded` : ""} · LLM ${esc(backends.join(", ") || "none")} · generated ${new Date().toLocaleString()}</p>
 ${backends.length > 1 ? `<p><b>Warning:</b> these matches used different LLM backends; compare within one backend only.</p>` : ""}
 <h2>Summary (mean ± standard deviation across seeds)</h2>
 <div class="wrap"><table><thead><tr><th>Metric</th>${teams.map((t) => `<th>${esc(labels.get(t) ?? t)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>
-<p class="muted">Relative score = (mean team − mean no-communication) / (mean perfect − mean no-communication): the share of the possible coordination gain a team captured. It is only meaningful when the perfect team clearly beats the no-communication team. Highlighted cells are the best mean per metric.</p>
+<p class="muted">Highlighted cells are the best mean per metric.</p>
 <h2>Scores per seed</h2>
 <div class="wrap"><table><thead><tr><th>Seed</th>${teams.map((t) => `<th>${esc(labels.get(t) ?? t)}</th>`).join("")}<th>Match</th></tr></thead><tbody>${perSeed}</tbody></table></div>
+<h2>Communication matrix (mean messages per match)</h2>
+<p class="muted">Messages per sender → recipient pair. A message to several recipients counts once for each; the orchestrator's spawn briefs count. Concentration is the share of all this traffic on the busiest agent's edges (100% is a pure star). The viewer's graph view draws the same numbers.</p>
+${teams.map((t) => matrixTable(scored, t, labels.get(t) ?? t)).join("\n")}
 ${skipped.length ? `<h2>Excluded</h2><ul>${skipped.map((m) => `<li>${esc(m.match_id)}: ${esc(m.abort_reason ?? m.status)}</li>`).join("")}</ul>` : ""}
 </body></html>`;
   const target = out ?? join(RUNS_DIR, `report-${new Date().toISOString().replace(/[:.]/g, "-")}.html`);

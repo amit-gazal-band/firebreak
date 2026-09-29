@@ -113,7 +113,8 @@ a {
   min-height: 0;
   overflow: auto;
   align-content: start;
-  justify-content: center;
+  /* safe: when the cards are wider than the window, scroll from the first one instead of cutting it off. */
+  justify-content: safe center;
 }
 .card {
   background: var(--panel);
@@ -173,22 +174,140 @@ a {
   font-size: 11px;
   white-space: nowrap;
 }
-.ticker {
-  height: 56px;
-  overflow: hidden;
-  padding: 4px 10px 8px;
+.feed {
+  border-top: 1px solid var(--line);
+  padding: 2px 10px 6px;
   font-size: 12px;
   color: var(--muted);
-  border-top: 1px solid var(--line);
 }
-.ticker div {
+.feed-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+}
+.feed-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.feed-head button {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 18px;
+}
+.feed-head button:hover {
+  border-color: var(--line);
+  color: var(--text);
+}
+.feed-head .feed-chip {
+  background: var(--panel-2);
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+.feed-body {
+  position: relative;
+}
+/* Three lines collapsed, ten expanded; keep COLLAPSED_PX in feed.ts in sync. */
+.feed-list {
+  height: 58px;
+  overflow: hidden;
+  line-height: 18px;
+}
+.feed.expanded .feed-list {
+  height: 184px;
+  overflow-y: auto;
+}
+.feed-line {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
+  border-radius: 3px;
 }
-.ticker b {
+.feed.expanded .feed-line {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  padding: 1px 0;
+}
+.feed-line:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.feed-line b {
   color: var(--accent-2);
   font-weight: 600;
+}
+.feed-tick {
+  font-variant-numeric: tabular-nums;
+  margin-right: 6px;
+  opacity: 0.7;
+}
+.feed-new {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  background: var(--accent-2);
+  color: #1b1e2b;
+  border: none;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.viewbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.viewbar button {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.viewbar button:hover {
+  border-color: var(--muted);
+}
+.viewbar button.on {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+  color: #1b1e2b;
+  font-weight: 700;
+}
+.seg {
+  display: flex;
+}
+.seg button {
+  border-radius: 0;
+  margin-left: -1px;
+}
+.seg button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+.seg button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.graph-tip {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  z-index: 2;
 }
 
 .controls {
@@ -346,15 +465,20 @@ a {
   background: rgba(10, 12, 20, 0.55);
   pointer-events: none;
 }
-.results div {
+.results > div {
   background: var(--panel);
   border: 1px solid var(--accent);
-  padding: 10px 18px;
+  padding: 14px 24px;
   border-radius: 10px;
   font-weight: 800;
-  font-size: 22px;
+  font-size: 28px;
 }
 .board-wrap {
+  position: relative;
+  display: flex;
+  gap: 8px;
+}
+.board-cell {
   position: relative;
 }
 
@@ -374,4 +498,307 @@ a {
   .clock {
     min-width: 0;
   }
+}
+
+/* Role icons (SPEC §9.3). */
+.icon {
+  display: inline-block;
+  vertical-align: -3px;
+  flex: none;
+}
+.feed-line .icon {
+  margin-right: 3px;
+}
+.legend {
+  display: flex;
+  gap: 2px;
+  align-self: center;
+  opacity: 0.9;
+}
+.card-head {
+  align-items: center;
+}
+.card-head .label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+.inspector h3 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Actions feed (SPEC §9.4). */
+.feed-line code {
+  font:
+    11.5px/1 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--text);
+}
+.feed-line.action.dim,
+.feed-line.action.dim code {
+  opacity: 0.6;
+}
+.feed-line.action.error .feed-result,
+.feed-line.action.error code {
+  color: var(--bad);
+}
+.feed-head .feed-chip .icon {
+  vertical-align: -2px;
+}
+.inline-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 1px 10px;
+  margin: 2px 0 8px;
+}
+.inline-btn:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+.decision-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.decision-nav button {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 6px;
+}
+.decision-nav button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Score explanation (SPEC §9.5). */
+.card-head .score {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 0 4px;
+}
+.card-head .score:hover {
+  background: var(--panel-2);
+}
+.score.flash-up {
+  animation: flash-up 0.9s ease-out;
+}
+.score.flash-down {
+  animation: flash-down 0.9s ease-out;
+}
+@keyframes flash-up {
+  0% {
+    color: var(--good);
+    text-shadow: 0 0 12px var(--good);
+  }
+}
+@keyframes flash-down {
+  0% {
+    color: var(--bad);
+    text-shadow: 0 0 12px var(--bad);
+  }
+}
+.scorebar {
+  padding: 0 10px 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+  min-height: 18px;
+}
+.chip {
+  white-space: nowrap;
+  cursor: help;
+  color: var(--text);
+}
+.chip.zero {
+  color: var(--muted);
+  opacity: 0.7;
+}
+.chip.loss {
+  color: var(--bad);
+}
+.chip-total {
+  color: var(--text);
+}
+.spark-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+}
+.started {
+  white-space: nowrap;
+  cursor: help;
+}
+.spark {
+  flex: 1;
+  min-width: 40px;
+  height: 22px;
+  cursor: crosshair;
+}
+.score-chart {
+  width: 220px;
+  height: 34px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: crosshair;
+}
+.score-log {
+  font-size: 12px;
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+}
+.score-line {
+  display: grid;
+  grid-template-columns: 34px auto 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.score-line.dim {
+  grid-template-columns: 34px 1fr auto;
+  color: var(--muted);
+  cursor: default;
+}
+.score-line:hover {
+  background: var(--panel-2);
+}
+.score-line.gain .score-delta {
+  color: var(--good);
+}
+.score-line.loss .score-delta {
+  color: var(--bad);
+}
+.score-delta,
+.score-total {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.score-total {
+  color: var(--muted);
+  min-width: 44px;
+}
+.results .result-box {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 60%;
+}
+.result-rows {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 6px 14px;
+  align-items: center;
+  font-size: 16px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.result-row {
+  display: contents;
+  cursor: help;
+}
+.result-row .result-calc {
+  color: var(--muted);
+  text-align: right;
+}
+.result-row .result-pts {
+  text-align: right;
+  min-width: 48px;
+}
+.result-row.good .result-pts,
+.result-row.good .result-label {
+  color: var(--good);
+}
+.result-row.bad .result-pts,
+.result-row.bad .result-label {
+  color: var(--bad);
+}
+.result-row.zero {
+  color: var(--muted);
+}
+.result-row.zero .result-label,
+.result-row.zero .result-pts {
+  opacity: 0.7;
+}
+.result-total > * {
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+  cursor: default;
+}
+.result-total .result-pts {
+  font-size: 18px;
+  font-weight: 800;
+}
+.result-started {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+  cursor: help;
+}
+.feed:not(.expanded) .feed-line {
+  height: 18px;
+}
+.feed-line .icon {
+  vertical-align: -2px;
+  height: 13px;
+  width: 13px;
+}
+.card > * {
+  flex-shrink: 0;
+}
+/* Narrow cards: the label truncates, the score never does. */
+.card-head {
+  min-width: 0;
+}
+.card-head .label {
+  min-width: 0;
+  white-space: nowrap;
+}
+.card-head .label,
+.card-head .team {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+}
+.card-head .legend,
+.card-head .score {
+  flex: none;
+}
+/* Three whole lines when collapsed: no sliver of an older line at the top. */
+.feed:not(.expanded) .feed-list {
+  height: 54px;
+  margin-bottom: 4px;
+}
+/* Cards clip their corners (overflow: hidden), which lets auto rows squeeze them: size rows to content. */
+.boards {
+  grid-auto-rows: max-content;
 }

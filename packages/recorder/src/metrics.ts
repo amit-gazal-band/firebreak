@@ -10,8 +10,6 @@ export interface WorldMetrics {
   team: string;
   label: string;
   score: number;
-  /** (team − none) / (perfect − none), when both reference teams are in the match. */
-  relative_score: number | null;
   cost_usd: number;
   cost_estimated: boolean;
   tokens: number;
@@ -36,6 +34,16 @@ export interface WorldMetrics {
   forecast_shared_lead_ticks: number | null;
   rate_limited: number;
   transport_errors: number;
+  /** Messages per sender → recipient pair over the whole match (SPEC §10, the data behind the graph §9.1). */
+  comm_matrix: CommEdge[];
+  /** Share of all edge traffic on the busiest node's edges: 1 for a pure star, null without messages. */
+  comm_concentration: number | null;
+}
+
+export interface CommEdge {
+  from: string;
+  to: string;
+  count: number;
 }
 
 export interface MatchMetrics {
@@ -61,6 +69,35 @@ function quantile(xs: number[], q: number): number | null {
 function num(db: Database, sql: string, ...params: (string | number)[]): number {
   const r = db.prepare(sql).get(...params) as Row | undefined;
   return Number(r ? (Object.values(r)[0] ?? 0) : 0);
+}
+
+/**
+ * Communication matrix of one world: messages with `t_ms <= untilMs` per sender → recipient pair.
+ * A message to n recipients adds 1 to each of its n edges. Spawn briefs count: they are the
+ * orchestrator's messages to its sub-agents. The viewer's graph counts the same way.
+ */
+export function communicationMatrix(db: Database, worldId: string, untilMs?: number): CommEdge[] {
+  const rows = db
+    .prepare(
+      `SELECT m.sender AS sender, r.value AS recipient, COUNT(*) AS n
+       FROM message m, json_each(m.recipients_json) r
+       WHERE m.world_id = ? AND m.t_ms <= ?
+       GROUP BY m.sender, r.value ORDER BY n DESC, m.sender, r.value`,
+    )
+    .all(worldId, untilMs ?? Number.MAX_SAFE_INTEGER) as Row[];
+  return rows.map((r) => ({ from: r.sender as string, to: r.recipient as string, count: Number(r.n) }));
+}
+
+/** Share of all edge traffic that touches the busiest node (sent plus received). */
+export function commConcentration(edges: CommEdge[]): number | null {
+  const total = edges.reduce((a, e) => a + e.count, 0);
+  if (!total) return null;
+  const traffic = new Map<string, number>();
+  for (const e of edges) {
+    traffic.set(e.from, (traffic.get(e.from) ?? 0) + e.count);
+    if (e.to !== e.from) traffic.set(e.to, (traffic.get(e.to) ?? 0) + e.count);
+  }
+  return Math.max(...traffic.values()) / total;
 }
 
 function worldMetrics(db: Database, h: MatchHeader, t: MatchHeader["teams"][number]): WorldMetrics {
@@ -173,12 +210,13 @@ function worldMetrics(db: Database, h: MatchHeader, t: MatchHeader["teams"][numb
     }
   }
 
+  const comm = communicationMatrix(db, w);
+
   return {
     world_id: w,
     team: t.team,
     label: t.label,
     score: state?.score.total ?? 0,
-    relative_score: null,
     cost_usd: Number(llm.usd),
     cost_estimated: Number(llm.est ?? 0) === 1,
     tokens: Number(llm.tok),
@@ -217,6 +255,8 @@ function worldMetrics(db: Database, h: MatchHeader, t: MatchHeader["teams"][numb
       "SELECT COUNT(*) FROM event WHERE world_id = ? AND type = 'transport_error'",
       w,
     ),
+    comm_matrix: comm,
+    comm_concentration: commConcentration(comm),
   };
 }
 
@@ -231,11 +271,6 @@ export function computeMetrics(path: string): MatchMetrics {
       ? (JSON.parse(llmRow.value_json as string) as { backend?: string; model?: string })
       : {};
     const worlds = h.teams.map((t) => worldMetrics(db, h, t));
-    const none = worlds.find((x) => x.team === "none" || x.team === "bots-none");
-    const perfect = worlds.find((x) => x.team === "perfect" || x.team === "bots-perfect");
-    if (none && perfect && perfect.score !== none.score) {
-      for (const x of worlds) x.relative_score = (x.score - none.score) / (perfect.score - none.score);
-    }
     return {
       match_id: h.match_id,
       seed: h.seed,

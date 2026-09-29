@@ -6,7 +6,7 @@ Build order: **engine → recording/replay → viewer → LLM agents → real te
 
 Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 
-## Status (2026-09-27)
+## Status (2026-09-29)
 
 | Milestone | Status | Notes |
 |---|---|---|
@@ -20,6 +20,12 @@ Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 | M7 Sub-agent team | done | orchestrator + spawn/report, hub-and-spoke in the viewer |
 | M8 Metrics and batch | done | metrics as SQL over recordings; `batch`, `report` |
 | M9 Demo polish | done | `export`, focus-on-one-team mode, 2×2 layout; showcase: `showcase/seed-11-four-teams.html` |
+| M9a Expandable message feed | done | `feed.ts`: 3 lines collapsed, 10 expanded; incremental, follow-newest, click to seek |
+| M9b Communication graph | done | `graph.ts`, `?view=board\|graph\|both`; `communicationMatrix` in `recorder`, matrix and concentration in `report`; showcases regenerated |
+| M9c Role icons | done | `icons.ts`: SVG paths as `Path2D`, cached bitmaps; board, graph, feed, inspector, card legend; same render in Chromium, Firefox, WebKit; no 10× frame-time change |
+| M9d Agent actions feed | done | `?feed=messages\|actions\|all`; actions from `llm` tool calls + `order_done`/`order_blocked` (bots: `order_issued`); agent filter; inspector pins a decision, ◀ / ▶; order lines + hover label |
+| M9e Score explanation | done | score log in `timeline` (test: matches `tick_state` on every tick of every committed recording), chips, pop-ups, log, sparkline + shared chart, per-agent points |
+| M9f Viewer fixes | done | one expand state for every feed; pop-ups name the event (`SCORE_LABEL`, shared with the score log) and stack (`stackLabels`); layout fits the expanded feeds, then drops feed lines, then scrolls the boards area in the grid that hides the least |
 
 ---
 
@@ -108,7 +114,7 @@ Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 - The metrics in §10 as SQL queries in `recorder`, with tests on hand-made fixture recordings.
 - Live counters under each board.
 - `firebreak batch --seeds N` (sequential, with a cost estimate and confirmation before it starts).
-- `firebreak report` → HTML summary across seeds (means, spread, relative score, per-seed table).
+- `firebreak report` → HTML summary across seeds (means, spread, per-seed table).
 
 **Done when:** a 20-seed batch produces a report.
 
@@ -118,6 +124,73 @@ Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 - Pick 2–3 good "showcase" seeds and keep their recordings with the repo (or in releases).
 
 **Done when:** someone with no setup can open an exported HTML file and watch a match at 4×.
+
+---
+
+## Before v1: communication views
+
+Both are viewer-only. They read the existing `message` table and event stream, so the recording format doesn't change and every committed recording and showcase gets them.
+
+### M9a: Expandable message feed (S)
+- Replace the 3-line ticker (`packages/viewer/src/player.ts`, `.ticker` in `style.css`) with a feed component: collapsed shows 3 lines, expanded shows 10 and scrolls through every message up to `t` (§9.2).
+- Per-card expand toggle plus an "expand all" control; long messages wrap when expanded.
+- Follow-newest while at the bottom; "↓ new messages" button once scrolled up.
+- Render incrementally (append new messages, rebuild only on seek) instead of rewriting `innerHTML` every frame, so scrolling isn't reset.
+- Click a line to seek to its `sent_at`.
+- Board sizing (the `chrome` height in `player.ts`) accounts for the expanded feed, so the board doesn't shrink or jump.
+
+**Done when:** on the seed-11 showcase at 4×, expanding a feed shows 10 lines, scrolling back through earlier messages works while playback continues, and the board stays the same size.
+
+### M9b: Communication graph (M)
+- `timeline`: a per-world edge count `(from, to) → count` up to `t`, built incrementally and rebuilt on seek, with a *recent* variant (last 10 ticks). Expand multi-recipient and channel messages per recipient (§9.1).
+- Graph renderer (Canvas 2D): fixed pentagon layout with HQ in the centre, directed curved edges with arrowheads, width `sqrt(count)`, grey → red colour, node size by total traffic, flash on send.
+- A weight scale shared across all visible teams, with a legend.
+- Card view switch *board / graph / both*, global, persisted in `?view=`; *both* by default in focus mode.
+- Edge hover tooltip; click an edge to filter the M9a feed to that pair; click a node to open the inspector.
+- Same data as a SQL query in `recorder` (communication matrix and concentration, §10), with a fixture test, and a matrix per team in `firebreak report`.
+- Works in `export --html`; regenerate the showcase files.
+
+**Done when:** on the seed-11 showcase, the subagents graph is visibly a star around HQ, the band graph shows its real pairwise pattern, the graph matches the matrix from the SQL query, and scrubbing backwards shrinks the edges.
+
+## Before v1: readability
+
+Also viewer-only. Everything needed is already in the recording: tool calls in `llm_call.tool_calls_json`, order outcomes and scoring events in `event`, and the score in every `tick_state`. Committed recordings and showcases get all three after a rebuild.
+
+### M9c: Role icons (S)
+- `packages/viewer/src/icons.ts`: one SVG path per role, HQ and civilian (§9.3), as `Path2D`, with a per-size offscreen-canvas cache.
+- `drawAgent` in `render.ts`: role-colour disc + icon in place of the letter; keep the selected / blocked rings and water pips; FF1/FF2 number badge.
+- Use the same icons for graph nodes (`graph.ts`), the inspector header, feed lines, and a role legend in the card header.
+- Civilian person icon in place of the dot, keeping the countdown ring.
+
+**Done when:** on the seed-11 showcase in the 3×2 layout, every role is recognisable without the legend at the smallest board size, the exported HTML looks the same in Chrome, Safari and Firefox, and 10× playback frame time doesn't regress.
+
+### M9d: Agent actions feed (M)
+- `timeline`: an action list per world built from `llm` frames (one entry per tool call, at `ended_ms`) plus `order_done` / `order_blocked` events, incremental and rebuilt on seek, like messages.
+- `feed.ts`: *Messages / Actions / All* tabs, global and in `?feed=`; action line formatting (✓ / ✗ / ⛔, dimmed `wait` and completions); hide-completions checkbox; communication tools shown once, as messages, in *All* (§9.4).
+- Agent filter chip, alongside the pair filter from M9b.
+- Inspector: open on a specific decision (from a clicked line), with ◀ / ▶ through the agent's decisions (`lastLlmCall` becomes an index lookup).
+- Board: dashed order lines from each agent to its target (red when blocked), hover label with the current order, toggle to hide.
+- Card sizing: the tabs don't change the feed height budget from M9a.
+
+**Done when:** on the seed-11 showcase, every order an agent issues and every validation error appears in *Actions* at the right time, *All* has no duplicate lines for messages, clicking an action opens that exact decision in the inspector, and the order lines match the orders shown in the inspector.
+
+### M9e: Score explanation (M)
+- `timeline`: a per-world score log from the scoring events (§4.6 table), with delta, credited agent and running total; a test that the running total equals `tick_state.score.total` on every tick of the committed recordings.
+- Card: breakdown chips under the score, "started at N" note, score flash; click the score to open the log (click a line to seek).
+- Board: floating score pop-ups at the event's tile.
+- Score chart: small per-card sparkline, and a shared all-teams chart in the controls area (Canvas 2D, same style as the graph).
+- Inspector: per-agent points and the team's losses.
+
+**Done when:** on the seed-11 showcase, the breakdown always adds up to the shown score, every score change has a pop-up and a log line explaining it, the chart shows where the teams diverged, and someone who hasn't seen the rules can explain a final score from the card alone.
+
+### M9f: Viewer fixes (S)
+Viewer-only; showcases get them after a rebuild.
+
+- **Linked expand/collapse** (§9.2): one global expanded state in `player.ts`. A card's feed toggle (`onToggle` in `feed.ts`) sets it for every feed, like the "expand feeds" button already does, and every toggle label follows it.
+- **Event pop-ups** (§9.5): the board pop-ups in `render.ts` draw the event's name (`Civilian evacuated`, `Civilian lost`, `Fire put out`, `House destroyed`) instead of the delta, keeping the green / red colour and the rise-and-fade. One label map shared with the score log so the wording matches. Pop-ups on the same tile and tick stack instead of overlapping.
+- **No page scroll** (§9.2): `layout()` in `player.ts` uses the expanded feed height in `chromeHeight()` when the feeds are expanded, so the boards shrink to fit and the page never scrolls; re-run layout on every expand/collapse. Check the `Math.max(220, …)` floor doesn't force a scrollbar at common window sizes; if it would, cap the expanded feed's line count instead.
+
+**Done when:** on the seed-11 showcase in the 2×2 and 3×2 layouts at a 1440×900 window, clicking any one card's expand toggle expands every feed and flips every label, the page has no vertical scrollbar collapsed or expanded (boards shrink when expanded and grow back when collapsed), and every scoring event shows its event name on the board instead of points.
 
 ---
 

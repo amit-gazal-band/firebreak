@@ -2,7 +2,7 @@
 
 > A live, replayable game that compares how well teams of AI agents coordinate when the **only** difference between them is how they communicate.
 
-Status: v0.2 (v0 implemented) · Owner: Amit Gazal
+Status: v0.4 (v0 implemented; communication views done; role icons, agent actions and score explanation planned before v1) · Owner: Amit Gazal
 
 ---
 
@@ -103,6 +103,15 @@ Agents issue **orders**, not single steps. The engine carries out the order each
 | Fire tile extinguished | +1 |
 
 A match ends after `ticks` (default 60), or earlier if no fire is left and no civilian is waiting.
+
+**How the live score behaves.** The engine recomputes the total every tick as `10 × evacuated − 20 × lost + extinguished + 5 × houses_standing`. Standing houses count from tick 0, so a map with 10 houses starts at **50**, and a destroyed house shows up as **−5**. Every change to the score comes from exactly one engine event, which the viewer uses to explain it (§9.5):
+
+| Engine event | Score change | Credited to |
+|---|---|---|
+| `civilian_evacuated` | +10 | the rescuer (`by`) |
+| `civilian_lost` | −20 | the team (`cause`: fire or deadline) |
+| `extinguished` | +1 | every firefighter in `by` (a joint extinguish lists both) |
+| `house_destroyed` | −5 | the team |
 
 ### 4.7 Observations
 
@@ -306,13 +315,92 @@ The viewer only ever consumes an **event stream**. Live mode is a websocket that
 ## 9. Viewer
 
 - **Layout:** a grid of boards, one per team (2×2 for four teams, 3×2 with the reference teams), each labelled with team name and live score.
-- **Board:** the tile map, fire intensity, agents as role icons, civilians with countdown rings, and fog of war shaded by the team's combined vision.
+- **Board:** the tile map, fire intensity, agents as role icons (§9.3), civilians with countdown rings, and fog of war shaded by the team's combined vision.
 - **Message traffic:** messages drawn as lines between agents while in flight (hub-and-spoke for sub-agents, broadcast for a Slack channel, targeted for Band rooms).
 - **Counters** under each board: score, $ spent, messages, stale actions, idle ticks, missed joint tasks.
+- **Score breakdown** under each board's score, plus score pop-ups, a score log and a score chart (§9.5).
+- **Feed** under each board's counters: messages, agent actions (tool calls), or both (§9.2, §9.4).
+- **Communication graph** per team, shown in place of the board or beside it (§9.1).
 - **Inspector:** click an agent to see its latest observation, its prompt's message window, and its last LLM response.
 - **Controls:** play/pause, speed (0.5–10×), timeline scrubber with event markers, step ±1 tick, choose which teams are shown.
 - Stack: Vite + TypeScript + Canvas 2D (six 20×20 boards are far below what needs WebGL). The build is one self-contained `index.html`, which the server serves and `export` embeds a recording into.
-- URL parameters: `?rec=<file>`, `?live`, `?t=<seconds>`, `?paused`, `?speed=<n>`.
+- URL parameters: `?rec=<file>`, `?live`, `?t=<seconds>`, `?paused`, `?speed=<n>`, `?view=board|graph|both`, `?feed=messages|actions|all`.
+
+### 9.1 Communication graph
+
+Shows the *shape* of a team's communication: who talks to whom, and how much.
+
+- **Nodes:** the team's agents, labelled by role. The subagents team adds the orchestrator (HQ) as a node.
+- **Fixed layout:** nodes sit at the same positions on every team (a pentagon ordered scout, FF1, FF2, engineer, rescuer; HQ in the centre). The same position on every team makes shapes comparable at a glance: a star (hub-and-spoke), a clique (everyone talks), or a few isolated pairs.
+- **Edges:** one directed edge per sender → recipient pair, counted per recipient. A message to 3 recipients adds 1 to each of its 3 edges; a Slack channel post adds 1 to the edge to every other member. The orchestrator's spawn briefs count as its messages to the sub-agents. A→B and B→A are drawn as two slightly curved edges with arrowheads, so one-way traffic is visible.
+- **Weight:** the number of messages on the edge. Width grows with `sqrt(count)` (from a hairline at 1 message to about 8 px), and colour goes from a cool grey to red on the same scale. Both use a **scale shared across all teams on screen**, so a thick red edge means the same traffic on every board. A legend shows the scale's maximum.
+- **Time:** the graph shows messages with `sent_at ≤ t`, so it grows during playback and follows the scrubber. A toggle switches between *cumulative* (whole match up to `t`) and *recent* (the last 10 ticks), which shows how the shape changes over the match. An edge flashes briefly when a message is sent on it.
+- **Node size:** the agent's total messages sent plus received, so a hub (HQ, or a scout that briefs everyone) stands out.
+- **Interaction:** hovering an edge shows `A → B: n messages` and the count in the other direction. Clicking an edge filters the message feed (§9.2) to that pair; clicking a node opens the inspector for that agent, as on the board.
+- **Teams without communication** (`none`, `perfect`) show the nodes with no edges and the note "no messages on this team".
+- **View modes:** each board card switches between *board*, *graph*, and *both* (graph drawn next to the board). The choice applies to all cards at once and is kept in the URL (`?view=`). *Both* is the default in focus mode, where there's room.
+- Drawn with Canvas 2D, from the same message stream as the message lines on the board, so live and replay behave the same.
+
+### 9.2 Message feed
+
+- **Collapsed** (default): the latest 3 messages, one line each, truncated. This is the current behaviour.
+- **Expanded:** a toggle on the feed (and a global "expand all" control) grows it to show 10 lines. The feed scrolls through **every** message up to `t`, not just the latest 10. Long messages wrap instead of being truncated.
+- **Expand is one global state.** Every feed's toggle and the global control flip the same state: expanding or collapsing any one feed expands or collapses all of them, and every toggle label (`▾ expand` / `▴ collapse`) stays in sync. Feeds are never in a mixed state, so all cards keep the same height and the boards stay aligned.
+- **Follow newest:** while the feed is scrolled to the bottom it follows new messages. Once the user scrolls up it stays put and shows a "↓ new messages" button that jumps back to the bottom.
+- Each line shows the tick, sender → recipients, and text. Clicking a line seeks the player to that message's `sent_at`.
+- Seeking rebuilds the feed for the new `t`.
+- **No page scroll.** The whole viewer (controls, every card with its board and feed) always fits the window, collapsed or expanded. When the feeds expand, the layout recomputes the board size with the expanded feed height, so every board shrinks by the same amount instead of the page growing a scrollbar. Collapsing restores the larger boards. Only the feed itself scrolls. The board keeps a readable minimum size; if the window is too small even for that, the feed gives up lines before the page scrolls. If even three lines don't fit (e.g. *both* at 1440×900 with four or more teams), the boards area scrolls, in the grid that hides the least, rather than cutting a card off.
+- A pair filter from the graph (§9.1) shows as a removable chip above the feed.
+
+### 9.3 Role icons
+
+Agents are drawn as role icons instead of lettered circles, so a viewer can tell who is who without a legend.
+
+| Role | Icon |
+|---|---|
+| Scout | binoculars |
+| Firefighter | firefighter helmet (with a small `1` / `2` badge for FF1 / FF2) |
+| Engineer | hard hat with a wrench |
+| Rescuer | ambulance |
+| Orchestrator (HQ) | radio tower |
+
+- **SVG paths, not emoji.** Each icon is a hand-drawn SVG path bundled in the viewer, drawn on the canvas with `Path2D`. Emoji render differently on every OS (and some fonts lack them), which would make an exported HTML file look different on each machine. SVG paths look the same everywhere, work offline and in `export --html`, and can be tinted.
+- **Role colour stays.** The icon sits on a disc in the existing role colour, so colour and shape both identify the role (colour alone fails for colour-blind viewers).
+- **State stays visible:** the white ring when selected, the red ring when the order is blocked, and the firefighter's water pips under the icon, as today.
+- **Readable at small sizes.** Icons are simple silhouettes that still read at the smallest board size in the 3×2 layout (about 14 px). Each icon is rasterised once per size to an offscreen canvas, not re-traced every frame.
+- **Same icons everywhere:** the board, the communication graph nodes (§9.1), feed lines (§9.2, §9.4), the inspector header, and a small role legend in the card header.
+- Civilians get a person icon in place of the plain dot; the countdown ring stays.
+
+### 9.4 Agent actions (tool calls)
+
+The feed can show what agents **do**, not just what they say. Every tool call an agent makes is already recorded in `llm_call.tool_calls` (name, arguments, result), so this needs no change to the recording format.
+
+- **Feed tabs:** *Messages* (the current feed), *Actions*, and *All* (both interleaved by time). The choice is global, like expand (§9.2), and kept in the URL (`?feed=messages|actions|all`). Default: *All*.
+- **Action lines:** one line per tool call, placed at the decision's `ended_at`: tick, agent icon, the call written like code, and its result.
+  - `F₁  extinguish(5,7)  ✓ takes effect on tick 24`
+  - `E   clear_debris(3,9)  ✗ not adjacent`
+  - Accepted calls in normal text, validation errors in red, `wait()` dimmed.
+- **Order outcomes** from the engine appear as follow-up lines under the agent: `order_done` (dimmed, e.g. `F₁ ✓ extinguish(5,7) done`) and `order_blocked` with its reason and detail (red, e.g. `R ⛔ no_path: debris at (17,6) blocks the way`). A checkbox hides completions, since `move_to` completions are frequent.
+- **No duplicates in *All*:** communication tool calls (`send_message`, `post`, `spawn`, `finish`...) are already shown as messages, so *All* shows them once, as the message. *Actions* shows only order tools and outcomes.
+- **Subagents team:** `spawn` and `finish` show as actions of the orchestrator and the sub-agent; the sub-agent's lines carry its body's icon.
+- **Reference and bot teams:** `none` and `perfect` have only action lines. Scripted bot teams show their orders as actions without results.
+- **Click a line:** seek to it and open the inspector on **that** decision (not only the latest), with its full tool calls, model text and prompt. The inspector gets ◀ / ▶ buttons to step through the agent's decisions.
+- **Agent filter:** clicking an agent on the board while the feed is open offers "show only this agent", shown as a removable chip like the pair filter (§9.1).
+- **On the board:** each agent's current order is drawn as a thin dashed line in its role colour from the agent to the order's target tile (red when blocked). Hovering an agent shows its current order as a label. A toggle hides the lines when the board gets busy.
+- Same incremental rendering, follow-newest and seek rules as the message feed (§9.2).
+
+### 9.5 Score explanation
+
+The score must be explainable at a glance: what it's made of, what changed it, and who earned it.
+
+- **Breakdown under the score:** four chips that add up to the total, e.g.
+  `🏠 9 × 5 = 45 · 🧍 2 × 10 = 20 · ☠ 1 × −20 = −20 · 🔥 7 × 1 = 7 → 52`.
+  Hovering a chip explains the rule ("+5 for each house still standing; 10 at start, 1 destroyed"). The chips use the §9.3 icon set; emoji above are only for this document.
+- **Starting score:** a small `started at 50 (10 houses)` note, so a score that drops from 50 at tick 0 isn't a surprise (§4.6).
+- **Event pop-ups:** when a scoring event happens, a floating label naming **what happened** rises from its tile on the board (green for gains, red for losses) and fades within about a tick of game time: `Civilian evacuated` (`civilian_evacuated`), `Civilian lost` (`civilian_lost`), `Fire put out` (`extinguished`), `House destroyed` (`house_destroyed`). The label says the event, not the points; the points are in the score log and breakdown chips. Labels are short so they stay readable at the smallest board size; overlapping pop-ups on the same tile or tick stack vertically instead of drawing on top of each other. The card's score briefly flashes the same colour.
+- **Score log:** clicking the score opens a list of every scoring event up to `t`: tick, event, delta, who it's credited to, and the running total (e.g. `t23  🧍 c2 evacuated by R  +10  → 62`). Clicking a line seeks to it. Built from the engine events in §4.6, so it always matches the total.
+- **Score chart:** a small line chart per team, score over ticks, with a dot per scoring event (hover shows the event). In the multi-team layout, a shared chart with one line per team, in team colours, on a shared y-axis, shows where teams diverged.
+- **Per-agent points:** the inspector shows the points credited to that agent (evacuations to the rescuer, extinguishes to each firefighter in `by`). Losses (civilians, houses) are the team's and are shown separately, not blamed on an agent.
 
 ## 10. Metrics
 
@@ -320,7 +408,6 @@ Every metric is a SQL query over the recording.
 
 **Headline**
 - **Score:** final score per team.
-- **Relative score:** `(team − none) / (perfect − none)`, meaning how much of the possible coordination gain the team captured.
 - **Cost:** total tokens and $ (orchestrator included).
 - **Time to clear:** tick when the map was cleared, if it was.
 
@@ -333,6 +420,7 @@ Every metric is a SQL query over the recording.
 - **Noise ratio:** share of the messages in an agent's prompt that weren't addressed to it and didn't affect its next order (a heuristic: not mentioned and no referenced entity in its vision).
 - **Context size:** prompt tokens per agent over time.
 - **Orchestrator queue time** (subagents only): report arrival → orchestrator handles it.
+- **Communication matrix:** messages per sender → recipient pair (the data behind the graph, §9.1, counted the same way), plus how concentrated it is: the share of all edge counts on the busiest node's edges (1.0 for a pure star).
 - **Forecast lead used:** ticks between the scout learning of a wind shift and the first order by another agent that acts on it.
 
 **Across seeds**

@@ -51,7 +51,7 @@ pnpm firebreak export 20260927-184427-s13-mmr7.sqlite   # single offline HTML fi
 pnpm firebreak run --config-from 20260927-184427-s13-mmr7.sqlite --seed 14   # same setup, new seed
 ```
 
-Viewer keys: space play/pause, ←/→ step a tick, 1–5 speed (0.5×–10×), drag the timeline to seek, click an agent to see what it saw and decided, click a board's header to focus on that team.
+Viewer keys: space play/pause, ←/→ step a tick, 1–5 speed (0.5×–10×), drag the timeline to seek, click an agent to see what it saw and decided, click a board's header to focus on that team. _board / graph / both_ (or `?view=`) shows each team's communication graph: who messaged whom, on one scale shared by all teams, whole match or the last 10 ticks; hover an edge for counts, click it to filter that team's feed. _expand feeds_ (or ▾ on one card) scrolls back through every message; click a line to jump there. _messages / actions / all_ (or `?feed=`) picks what the feeds show: actions are every tool call with its result (✓ accepted, ✗ rejected) and every order outcome (done, ⛔ blocked); click an action to open that exact decision in the inspector, and step with ◀ / ▶. Dashed lines show each agent’s current order (red when blocked); hover an agent for it. Under each score, chips add up to the total; click the score for the log of every scoring event; the chart in the controls shows where the teams diverged.
 
 A recording holds everything needed to replay and analyse a match without calling a model:
 

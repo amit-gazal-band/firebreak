@@ -168,8 +168,6 @@ describe("recording and replay", () => {
     expect((cfg.resolved as Record<string, unknown>).secret_token).toBe("<redacted>");
     expect(cfg.code).toEqual({ git_commit: "test" });
     expect(cfg.prompts).toBeDefined();
-    const m = computeMetrics(file);
-    expect(m.worlds.find((w) => w.team === "bots-perfect")!.relative_score).toBe(1);
   });
 });
 
