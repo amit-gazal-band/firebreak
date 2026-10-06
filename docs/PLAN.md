@@ -14,7 +14,7 @@ Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 | M1 Engine | done | deterministic, shared per-tile randomness, scripted bots |
 | M2 Recorder and replay core | done | one SQLite file per match (`node:sqlite`), config stored with it, `verify` |
 | M3 Viewer | done | Canvas 2D instead of PixiJS; single-file build |
-| M4 LLM runtime and reference teams | done | both backends; `claude-code` tuned to ~4 s/decision |
+| M4 LLM runtime and reference teams | done | Claude/OpenAI API plus subscription backends; `claude-code` tuned to ~4 s/decision |
 | M5 Tune the game | first pass, needs more seeds | batch 1: perfect beat none 3/3; batch 2 (prompt v3): band best (+26 mean) but perfect ≈ none. Needs 10–20 seeds (docs/TUNING.md §6) |
 | M6 Band team | done | real Band rooms; delivery semantics measured |
 | M7 Sub-agent team | done | orchestrator + spawn/report, hub-and-spoke in the viewer |
@@ -22,10 +22,12 @@ Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 | M9 Demo polish | done | `export`, focus-on-one-team mode, 2×2 layout; showcase: `showcase/seed-11-four-teams.html` |
 | M9a Expandable message feed | done | `feed.ts`: 3 lines collapsed, 10 expanded; incremental, follow-newest, click to seek |
 | M9b Communication graph | done | `graph.ts`, `?view=board\|graph\|both`; `communicationMatrix` in `recorder`, matrix and concentration in `report`; showcases regenerated |
-| M9c Role icons | done | `icons.ts`: SVG paths as `Path2D`, cached bitmaps; board, graph, feed, inspector, card legend; same render in Chromium, Firefox, WebKit; no 10× frame-time change |
+| M9c Role icons | done | `icons.ts`: SVG paths as `Path2D`, cached bitmaps; board, graph, feed, inspector, global legend; same render in Chromium, Firefox, WebKit; no 10× frame-time change |
 | M9d Agent actions feed | done | `?feed=messages\|actions\|all`; actions from `llm` tool calls + `order_done`/`order_blocked` (bots: `order_issued`); agent filter; inspector pins a decision, ◀ / ▶; order lines + hover label |
-| M9e Score explanation | done | score log in `timeline` (test: matches `tick_state` on every tick of every committed recording), chips, pop-ups, log, sparkline + shared chart, per-agent points |
+| M9e Score explanation | done | score log in `timeline` (test: matches `tick_state` on every tick of every committed recording), chips, pop-ups, log, one labelled outcome chart, per-agent points |
 | M9f Viewer fixes | done | one expand state for every feed; pop-ups name the event (`SCORE_LABEL`, shared with the score log) and stack (`stackLabels`); layout fits the expanded feeds, then drops feed lines, then scrolls the boards area in the grid that hides the least |
+| M9g Replay commentator | done | omniscient post-match broadcast, persisted sidecars, automatic historical generation |
+| M9h Replay comparison | done | responsive score/mission/operational stats, per-team timeline lanes, multi-metric outcome chart, persistent panel and Dark/Light preferences, adaptive map/graph surface layout |
 
 ---
 
@@ -35,7 +37,7 @@ Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 - pnpm workspace with the `packages/*` from §12, TypeScript strict, Vitest, ESLint/Prettier.
 - `cli` package with an empty `firebreak` command.
 - GitHub Actions: lint, typecheck, test.
-- `.env.example` (ANTHROPIC_API_KEY, BAND_* per agent), `runs/` git-ignored.
+- `.env.example` (optional billed API keys, BAND_* per agent), `runs/` git-ignored.
 
 **Done when:** `pnpm i && pnpm test` passes on a clean clone, and CI is green.
 
@@ -74,7 +76,7 @@ Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 **Done when:** a recorded scripted match replays smoothly at 10×, and seeking to any tick is instant.
 
 ### M4: LLM agent runtime and reference teams (L)
-- `LlmClient` interface with two backends: `api` (Anthropic SDK, API key) and `claude-code` (Claude Agent SDK, subscription login). Token/cost/latency accounting, per-match budget cap, usage-limit abort (§6.3).
+- `LlmClient` interface with API and subscription backends for Anthropic and OpenAI. Token/cost/latency accounting, per-match budget cap, usage-limit abort (§6.3).
 - Order tools per role, validation errors as tool results, turn limit per decision (§6.4).
 - Measure per-call latency on both backends; record the numbers in `docs/TUNING.md`.
 - Agent loop, wake triggers, and trigger merging (§6.1–6.2).
@@ -90,14 +92,14 @@ Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 - Adjust spread rate, tick length, vision radius, civilian deadlines, and joint-fire frequency until:
   - `perfect` clearly beats `none` (target: ≥ 40% higher mean score),
   - neither team hits the score floor or ceiling on most seeds,
-  - LLM latency (p90) fits comfortably inside a tick.
+  - synchronized decisions finish reliably; provider latency is recorded separately and wall time remains practical.
 - Record the chosen defaults in `configs/default.yaml` and note the reasoning in `docs/TUNING.md`.
 
 **Done when:** the target gap holds on a fresh set of 10 seeds. **If the gap can't be reached, stop and redesign the rules before building real teams.**
 
 ### M6: Band team (M)
 - Register 5 external agents (open question §14.2), config loading.
-- `band` transport on `@band-ai/sdk` `GenericAdapter`: team room setup, `send_message`, `create_room`, `add_participant` (§7.3).
+- `band` transport on `@band-ai/sdk` `GenericAdapter`: team room setup, `send_message`, `create_room`, `add_participant` (§7.4).
 - Room cleanup after a match.
 - Resolve delivery semantics (§14.1) and document them in the transport.
 - Handle reconnects and rate-limit errors, and log them as events.
@@ -105,7 +107,7 @@ Sizes: **S** ≈ 1 day, **M** ≈ 2–3 days, **L** ≈ 1 week.
 **Done when:** a `band` vs `none` vs `perfect` match runs end to end with real Band rooms, and message timings are recorded.
 
 ### M7: Sub-agent team (M)
-- Orchestrated team controller (§7.4): orchestrator loop, `spawn`, sub-agent lifetime, `finish`, auto-report with structured sightings.
+- Orchestrated team controller (§7.5): orchestrator loop, `spawn`, sub-agent lifetime, `finish`, auto-report with structured sightings.
 - Viewer: hub-and-spoke message lines, spawn/report markers, and an orchestrator panel (its queue and live sub-agents).
 
 **Done when:** a four-team match (`none`, `perfect`, `band`, `subagents`) runs live and replays.
@@ -159,7 +161,7 @@ Also viewer-only. Everything needed is already in the recording: tool calls in `
 ### M9c: Role icons (S)
 - `packages/viewer/src/icons.ts`: one SVG path per role, HQ and civilian (§9.3), as `Path2D`, with a per-size offscreen-canvas cache.
 - `drawAgent` in `render.ts`: role-colour disc + icon in place of the letter; keep the selected / blocked rings and water pips; FF1/FF2 number badge.
-- Use the same icons for graph nodes (`graph.ts`), the inspector header, feed lines, and a role legend in the card header.
+- Use the same icons for graph nodes (`graph.ts`), the inspector header, feed lines, and the global role legend. Label the bodyless orchestrator `HQ`.
 - Civilian person icon in place of the dot, keeping the countdown ring.
 
 **Done when:** on the seed-11 showcase in the 3×2 layout, every role is recognisable without the legend at the smallest board size, the exported HTML looks the same in Chrome, Safari and Firefox, and 10× playback frame time doesn't regress.
@@ -176,9 +178,9 @@ Also viewer-only. Everything needed is already in the recording: tool calls in `
 
 ### M9e: Score explanation (M)
 - `timeline`: a per-world score log from the scoring events (§4.6 table), with delta, credited agent and running total; a test that the running total equals `tick_state.score.total` on every tick of the committed recordings.
-- Card: breakdown chips under the score, "started at N" note, score flash; click the score to open the log (click a line to seek).
+- Card: aligned breakdown components under the score and score flash; click the score to open the log (click a line to seek). Do not repeat the initial score on a dedicated row because the house component already shows it.
 - Board: floating score pop-ups at the event's tile.
-- Score chart: small per-card sparkline, and a shared all-teams chart in the controls area (Canvas 2D, same style as the graph).
+- Outcome chart: one labelled, collapsible all-teams chart below the cards. Do not repeat unexplained sparklines or a second miniature chart.
 - Inspector: per-agent points and the team's losses.
 
 **Done when:** on the seed-11 showcase, the breakdown always adds up to the shown score, every score change has a pop-up and a log line explaining it, the chart shows where the teams diverged, and someone who hasn't seen the rules can explain a final score from the card alone.
@@ -197,11 +199,11 @@ Viewer-only; showcases get them after a rebuild.
 ## v1: Slack and Linear
 
 ### M10: Slack team (M)
-- Sandbox workspace, 5 bot users, Socket Mode transport, `post` and `reply_in_thread` (§7.5).
+- Sandbox workspace, 5 bot users, Socket Mode transport, `post` and `reply_in_thread` (§7.6).
 - Viewer: broadcast-style message lines.
 
 ### M11: Linear team (M)
-- Sandbox workspace, webhook receiver (local tunnel), `create_issue`, `comment`, `set_status`, `assign` (§7.6).
+- Sandbox workspace, webhook receiver (local tunnel), `create_issue`, `comment`, `set_status`, `assign` (§7.7).
 - Viewer: issue cards next to the board.
 
 ### M12: Full batch
@@ -218,7 +220,7 @@ About 5 agents × 4 LLM teams × ~60 decisions ≈ 1,200 calls, plus the orchest
 | Risk | Mitigation |
 |---|---|
 | The game doesn't reward communication | M5 gate: tune with reference teams before building real teams |
-| LLM latency varies between teams | Same model; latency recorded per call; discard outlier matches; many seeds |
+| LLM latency varies between teams | Synchronized mode removes it from simulated reaction time; record it for wall-time diagnosis. Keep `--realtime` results separate |
 | Rate limits (Band, Slack, Linear, Anthropic) distort results | Log every rate-limit event; report them per team; use sandbox workspaces |
 | A setup looks rigged | Faithful setups (§7), generous choices where unsure, open-source harness (§14.6) |
 | Sub-agents win in easy configurations | Expected; show where the crossover is (score vs. spread rate / team size) |

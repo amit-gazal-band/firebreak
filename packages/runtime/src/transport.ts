@@ -35,6 +35,10 @@ export interface Transport {
   onDeliver(agent: string, cb: (m: DeliveredMessage) => void): void;
   /** Short text for the prompt describing how communication works on this team. */
   promptSection(agent: string): string;
+  /** Wait for transport deliveries triggered by completed tool calls. */
+  idle?(): Promise<void>;
+  /** Synchronous companion used to close races between delivery and agent wake-up. */
+  isIdle?(): boolean;
   teardown(): Promise<void>;
 }
 

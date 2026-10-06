@@ -1,7 +1,9 @@
 import type { MatchHeader, RecordingBundle, StreamFrame } from "@firebreak/engine";
 import type { FeedMode } from "./feed";
 import { Player, type View } from "./player";
+import { renderRulesPage, rulesHref } from "./reference";
 import "./style.css";
+import { applyViewerTheme, createThemeToggle, loadViewerTheme } from "./theme";
 import { Timeline } from "./timeline";
 
 declare global {
@@ -12,22 +14,42 @@ declare global {
 
 const app = document.getElementById("app")!;
 const params = new URLSearchParams(location.search);
+applyViewerTheme(loadViewerTheme());
 const view = {
   ...(params.has("view") ? { view: params.get("view") as View } : {}),
   ...(params.has("feed") ? { feed: params.get("feed") as FeedMode } : {}),
 };
 
-function play(bundle: RecordingBundle, name?: string) {
+function play(bundle: RecordingBundle, name?: string, commentaryError?: string) {
   const tl = new Timeline(bundle.header);
   for (const f of bundle.frames) tl.add(f);
-  new Player(app, tl, {
+  const player = new Player(app, tl, {
     mode: "replay",
     ...(params.has("t") ? { startAt: Number(params.get("t")) } : {}),
     ...(params.has("speed") ? { speed: Number(params.get("speed")) } : {}),
     paused: params.has("paused"),
     ...view,
     ...(name ? { recordingName: name, fetchPrompt: (id: string) => fetchPrompt(name, id) } : {}),
+    ...(commentaryError ? { commentaryError } : {}),
   });
+  return { tl, player };
+}
+
+async function generateMissingCommentary(rec: string, tl: Timeline, player: Player) {
+  try {
+    const generated = await fetch(`/api/recordings/${encodeURIComponent(rec)}/commentary`, {
+      method: "POST",
+    });
+    if (!generated.ok) {
+      const body = (await generated.json()) as { error?: string };
+      throw new Error(body.error ?? `HTTP ${generated.status}`);
+    }
+    for (const frame of (await generated.json()) as StreamFrame[]) tl.add(frame);
+    player.setCommentaryMessage();
+    player.onFrames();
+  } catch (e) {
+    player.setCommentaryMessage(e instanceof Error ? e.message : String(e));
+  }
 }
 
 async function fetchPrompt(rec: string, id: string): Promise<string | null> {
@@ -62,9 +84,11 @@ function live() {
 }
 
 async function index() {
-  app.innerHTML = `<div class="index"><h1>FIRE<span style="color:var(--accent)">BREAK</span></h1>
+  app.innerHTML = `<div class="index"><div class="index-actions" id="index-actions"></div><h1>FIRE<span style="color:var(--accent)">BREAK</span></h1>
     <div class="meta">Teams of AI agents fight the same wildfire. The only difference is how they communicate.</div>
+    <p class="index-nav"><a href="${rulesHref()}">Rules and map legend</a></p>
     <div id="live-slot"></div><div id="list" class="empty">Loading recordings…</div></div>`;
+  document.getElementById("index-actions")!.append(createThemeToggle());
   try {
     const status = (await (await fetch("/api/live/status")).json()) as {
       running: boolean;
@@ -107,6 +131,7 @@ async function index() {
 }
 
 async function boot() {
+  if (params.has("rules")) return renderRulesPage(app);
   if (window.__FIREBREAK_BUNDLE__) return play(window.__FIREBREAK_BUNDLE__);
   const rec = params.get("rec");
   if (rec) {
@@ -116,7 +141,17 @@ async function boot() {
       app.innerHTML = `<div class="index"><h1>Recording not found</h1><p><a href="/">Back</a></p></div>`;
       return;
     }
-    return play((await r.json()) as RecordingBundle, rec);
+    const bundle = (await r.json()) as RecordingBundle;
+    if (!bundle.frames.some((f) => f.kind === "commentary")) {
+      const { tl, player } = play(
+        bundle,
+        rec,
+        "Generating and saving this broadcast in the background. The replay is ready to watch.",
+      );
+      void generateMissingCommentary(rec, tl, player);
+      return;
+    }
+    return play(bundle, rec);
   }
   if (params.has("live")) return live();
   return index();

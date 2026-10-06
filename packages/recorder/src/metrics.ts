@@ -71,6 +71,32 @@ function num(db: Database, sql: string, ...params: (string | number)[]): number 
   return Number(r ? (Object.values(r)[0] ?? 0) : 0);
 }
 
+/** Intensity-3 fire-ticks without both firefighters assigned to that exact target. */
+function uncoveredJointFireTicks(db: Database, worldId: string): number {
+  let uncovered = 0;
+  for (const row of db
+    .prepare("SELECT state_json FROM tick_state WHERE world_id = ? AND tick > 0")
+    .all(worldId) as Row[]) {
+    const state = JSON.parse(row.state_json as string) as {
+      fires: { pos: [number, number]; intensity: number }[];
+      agents: { role: string; order_status: string; order: Order | null }[];
+    };
+    for (const fire of state.fires) {
+      if (fire.intensity !== 3) continue;
+      const assigned = state.agents.filter(
+        (agent) =>
+          agent.role === "firefighter" &&
+          agent.order_status === "active" &&
+          agent.order?.type === "extinguish" &&
+          agent.order.x === fire.pos[0] &&
+          agent.order.y === fire.pos[1],
+      ).length;
+      if (assigned < 2) uncovered++;
+    }
+  }
+  return uncovered;
+}
+
 /**
  * Communication matrix of one world: messages with `t_ms <= untilMs` per sender → recipient pair.
  * A message to n recipients adds 1 to each of its n edges. Spawn briefs count: they are the
@@ -242,7 +268,7 @@ function worldMetrics(db: Database, h: MatchHeader, t: MatchHeader["teams"][numb
       w,
       ...STALE,
     ),
-    missed_joint: num(db, "SELECT COUNT(*) FROM event WHERE world_id = ? AND type = 'joint_needed'", w),
+    missed_joint: uncoveredJointFireTicks(db, w),
     duplicate_work: duplicate,
     noise_ratio: addressedKnown ? noise / addressedKnown : null,
     context_avg_tokens: llm.avg_in === null ? null : Math.round(Number(llm.avg_in)),

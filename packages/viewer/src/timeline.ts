@@ -1,5 +1,7 @@
 import {
   formatOrder,
+  type CommentaryFrame,
+  type CommentarySegment,
   type DeliveryFrame,
   type EndFrame,
   type EventFrame,
@@ -93,6 +95,7 @@ export interface WorldTimeline {
   events: EventFrame[];
   messages: MessageView[];
   llm: LlmFrame[];
+  commentary: CommentaryFrame[];
   /** Tool calls and order outcomes, in time order. */
   actions: ActionView[];
   /** Bumped when an action lands before the end of the list, so feeds rebuild. */
@@ -104,6 +107,21 @@ export interface WorldTimeline {
   startHouses: number;
   /** Each agent's decisions, by `ended_ms`. */
   decisions: Map<string, LlmFrame[]>;
+}
+
+export type OutcomeMetric =
+  "score" | "extinguished" | "active_fires" | "evacuated" | "lost" | "houses_standing" | "houses_destroyed";
+
+export interface OutcomeSnapshot {
+  tick: number;
+  t_ms: number;
+  score: number;
+  extinguished: number;
+  active_fires: number;
+  evacuated: number;
+  lost: number;
+  houses_standing: number;
+  houses_destroyed: number;
 }
 
 const ORDER_TOOLS = new Set([
@@ -169,6 +187,7 @@ export class Timeline {
   worlds = new Map<string, WorldTimeline>();
   end: EndFrame | null = null;
   lastMs = 0;
+  private finalTickMs = 0;
   private messageIndex = new Map<string, MessageView>();
   private cumulative = new Map<string, { t: number; next: number; edges: Edges }>();
   version = 0;
@@ -183,6 +202,7 @@ export class Timeline {
         events: [],
         messages: [],
         llm: [],
+        commentary: [],
         actions: [],
         actionsRev: 0,
         score: [],
@@ -307,6 +327,7 @@ export class Timeline {
       case "tick":
         w.ticks[f.tick] = f;
         this.lastMs = Math.max(this.lastMs, f.t_ms);
+        this.finalTickMs = Math.max(this.finalTickMs, f.t_ms);
         break;
       case "event":
         w.events.push(f);
@@ -327,12 +348,21 @@ export class Timeline {
         w.llm.push(f);
         this.addLlm(w, f);
         break;
+      case "commentary":
+        w.commentary.push(f);
+        break;
     }
   }
 
   /** Match time of the last frame (or the end frame). */
   get durationMs(): number {
-    return this.end ? Math.max(this.end.t_ms, this.lastMs) : this.lastMs;
+    // Draining an already in-flight call after the last playable tick must not
+    // create a motionless tail at the end of a completed replay.
+    return this.end?.status === "completed"
+      ? this.finalTickMs
+      : this.end
+        ? Math.max(this.end.t_ms, this.lastMs)
+        : this.lastMs;
   }
 
   maxTick(w: WorldTimeline): number {
@@ -374,19 +404,69 @@ export class Timeline {
         calls++;
       }
     let stale = 0;
-    let joint = 0;
     for (const e of w.events) {
       if (e.t_ms > t) continue;
       if (e.type === "order_blocked" && STALE_REASONS.has(String(e.payload.reason))) stale++;
-      if (e.type === "joint_needed") joint++;
     }
     let messages = 0;
     for (const m of w.messages) if (m.t_ms <= t) messages++;
     let idle = 0;
+    let joint = 0;
     for (let i = 1; i <= tick && i < w.ticks.length; i++) {
-      for (const a of w.ticks[i]!.state.agents) if (a.order_status !== "active") idle++;
+      const state = w.ticks[i]!.state;
+      for (const a of state.agents) if (a.order_status !== "active") idle++;
+      for (const fire of state.fires) {
+        if (fire.intensity !== 3) continue;
+        const assigned = state.agents.filter(
+          (agent) =>
+            agent.role === "firefighter" &&
+            agent.order_status === "active" &&
+            agent.order?.type === "extinguish" &&
+            agent.order.x === fire.pos[0] &&
+            agent.order.y === fire.pos[1],
+        ).length;
+        if (assigned < 2) joint++;
+      }
     }
     return { cost, calls, stale, joint, messages, idle };
+  }
+
+  /** Mission outcomes at a replay position, read from recorded world state. */
+  outcomesAt(w: WorldTimeline, t: number): OutcomeSnapshot | null {
+    const frame = this.frameAt(w, t);
+    if (!frame) return null;
+    const { score, fires } = frame.cur;
+    return {
+      tick: frame.tick,
+      t_ms: this.tickTime(w, frame.tick),
+      score: score.total,
+      extinguished: score.extinguished,
+      active_fires: fires.length,
+      evacuated: score.evacuated,
+      lost: score.lost,
+      houses_standing: score.houses_standing,
+      houses_destroyed: score.houses_destroyed,
+    };
+  }
+
+  /** One point per recorded tick for the multi-metric comparison chart. */
+  outcomeSeries(w: WorldTimeline, metric: OutcomeMetric): { tick: number; t_ms: number; value: number }[] {
+    return w.ticks.flatMap((frame) =>
+      frame
+        ? [
+            {
+              tick: frame.tick,
+              t_ms: frame.t_ms,
+              value:
+                metric === "active_fires"
+                  ? frame.state.fires.length
+                  : metric === "score"
+                    ? frame.state.score.total
+                    : frame.state.score[metric],
+            },
+          ]
+        : [],
+    );
   }
 
   /** Messages to draw at time t: sent within the window, not older than `holdMs` after delivery. */
@@ -451,6 +531,27 @@ export class Timeline {
     return this.decisionsOf(w, agent)[this.decisionIndexAt(w, agent, t)] ?? null;
   }
 
+  inFlightLlmCall(w: WorldTimeline, agent: string, t: number): LlmFrame | null {
+    return w.llm.find((call) => call.agent_id === agent && call.started_ms <= t && call.ended_ms > t) ?? null;
+  }
+
+  commentaryAt(w: WorldTimeline, t: number): CommentarySegment | null {
+    let best: CommentarySegment | null = null;
+    for (const call of w.commentary) {
+      for (const segment of call.segments) {
+        if (segment.t_ms <= t && (!best || segment.t_ms >= best.t_ms)) best = segment;
+      }
+    }
+    return best;
+  }
+
+  commentaryThrough(w: WorldTimeline, t: number): CommentarySegment[] {
+    return w.commentary
+      .flatMap((call) => call.segments)
+      .filter((segment) => segment.t_ms <= t)
+      .sort((a, b) => b.t_ms - a.t_ms);
+  }
+
   /** Scoring events up to time t. */
   scoreLogAt(w: WorldTimeline, t: number): ScoreEntry[] {
     let n = w.score.length;
@@ -477,8 +578,8 @@ export class Timeline {
     return { agents, lostCivilians, lostHouses };
   }
 
-  /** Markers for the scrubber: notable events across all worlds. */
-  markers(): { t: number; type: string }[] {
+  /** Markers retain their world so the shared scrubber can render one lane per visible team. */
+  markers(): { t: number; type: string; world_id: string; global: boolean }[] {
     const notable = new Set([
       "civilian_lost",
       "civilian_evacuated",
@@ -486,7 +587,7 @@ export class Timeline {
       "wind_changed",
       "bridge_collapsed",
     ]);
-    const out: { t: number; type: string }[] = [];
+    const out: { t: number; type: string; world_id: string; global: boolean }[] = [];
     const seenGlobal = new Set<string>();
     for (const w of this.worlds.values()) {
       for (const e of w.events) {
@@ -495,7 +596,7 @@ export class Timeline {
         const k = `${e.type}@${e.tick}`;
         if (global && seenGlobal.has(k)) continue;
         seenGlobal.add(k);
-        out.push({ t: e.t_ms, type: e.type });
+        out.push({ t: e.t_ms, type: e.type, world_id: w.id, global });
       }
     }
     return out;

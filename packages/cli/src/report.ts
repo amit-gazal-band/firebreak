@@ -51,7 +51,12 @@ const METRICS: {
   { key: "latency_p90_ms", label: "Message latency, p90 (ms)", fmt: (v) => v.toFixed(0), better: "low" },
   { key: "idle_agent_ticks", label: "Idle agent-ticks", fmt: (v) => v.toFixed(0), better: "low" },
   { key: "stale_actions", label: "Stale actions", fmt: (v) => v.toFixed(1), better: "low" },
-  { key: "missed_joint", label: "Missed joint tasks", fmt: (v) => v.toFixed(1), better: "low" },
+  {
+    key: "missed_joint",
+    label: "Uncovered intensity-3 fire-ticks",
+    fmt: (v) => v.toFixed(1),
+    better: "low",
+  },
   { key: "duplicate_work", label: "Duplicate work (agent-ticks)", fmt: (v) => v.toFixed(1), better: "low" },
   { key: "noise_ratio", label: "Noise ratio", fmt: (v) => `${(v * 100).toFixed(0)}%`, better: "low" },
   { key: "context_avg_tokens", label: "Prompt size, avg (tokens)", fmt: (v) => v.toFixed(0), better: "low" },
@@ -169,10 +174,10 @@ table.matrix{width:auto}
 <h1>FIRE<b>BREAK</b> report</h1>
 <p class="muted">${scored.length} completed match${scored.length === 1 ? "" : "es"}${skipped.length ? `, ${skipped.length} aborted and excluded` : ""} · LLM ${esc(backends.join(", ") || "none")} · generated ${new Date().toLocaleString()}</p>
 ${backends.length > 1 ? `<p><b>Warning:</b> these matches used different LLM backends; compare within one backend only.</p>` : ""}
-<h2>Summary (mean ± standard deviation across seeds)</h2>
+<h2>Summary (mean ± standard deviation across recordings)</h2>
 <div class="wrap"><table><thead><tr><th>Metric</th>${teams.map((t) => `<th>${esc(labels.get(t) ?? t)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>
-<p class="muted">Highlighted cells are the best mean per metric.</p>
-<h2>Scores per seed</h2>
+<p class="muted">Relative score = (mean team − mean no-communication) / (mean perfect − mean no-communication): the share of the possible coordination gain a team captured. It is only meaningful when the perfect team clearly beats the no-communication team. Highlighted cells are the best mean per metric.</p>
+<h2>Scores per recording</h2>
 <div class="wrap"><table><thead><tr><th>Seed</th>${teams.map((t) => `<th>${esc(labels.get(t) ?? t)}</th>`).join("")}<th>Match</th></tr></thead><tbody>${perSeed}</tbody></table></div>
 <h2>Communication matrix (mean messages per match)</h2>
 <p class="muted">Messages per sender → recipient pair. A message to several recipients counts once for each; the orchestrator's spawn briefs count. Concentration is the share of all this traffic on the busiest agent's edges (100% is a pure star). The viewer's graph view draws the same numbers.</p>

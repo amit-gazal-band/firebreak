@@ -173,7 +173,15 @@ export function drawGraph(
     ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    drawIcon(ctx, look.icon, p[0], p[1], r * 1.45, hq ? HQ_COLOR : "#1b1e2b");
+    if (hq) {
+      ctx.fillStyle = HQ_COLOR;
+      ctx.font = `900 ${Math.round(r * 0.72)}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("HQ", p[0], p[1]);
+    } else {
+      drawIcon(ctx, look.icon, p[0], p[1], r * 1.45, "#1b1e2b");
+    }
     if (look.badge) drawBadge(ctx, p[0] + r * 0.75, p[1] - r * 0.75, r * 0.38, look.badge);
     hits.nodes.push({ id: n.id, x: p[0], y: p[1], r: r * 1.2 });
   }

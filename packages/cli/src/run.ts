@@ -9,20 +9,23 @@ import {
   redact,
   resolveConfig,
   setPath,
+  type ClockMode,
   type MatchConfig,
   type MatchResult,
   type ResolvedConfig,
 } from "@firebreak/runtime";
 import { teamFactory } from "@firebreak/teams";
 import { REPO_ROOT } from "./paths";
+import { ensureCommentary } from "./commentary";
 
 export interface RunArgs {
   configPath?: string;
   configFrom?: string;
   seed?: number;
   teams?: string[];
+  commentary?: boolean;
   sets: string[];
-  virtual: boolean;
+  clockMode?: ClockMode;
   cliArgs: string[];
 }
 
@@ -35,10 +38,14 @@ export function loadResolvedConfig(a: RunArgs): ResolvedConfig {
   }
   if (a.seed !== undefined) overrides.seed = a.seed;
   if (a.teams) overrides.teams = a.teams;
+  if (a.commentary) setPath(overrides, "commentator.enabled", "true");
+  if (a.clockMode) setPath(overrides, "clock.mode", a.clockMode);
   let base: unknown = undefined;
   if (a.configFrom) {
     const db = openRecording(a.configFrom);
-    base = (readConfig(db).resolved as unknown) ?? undefined;
+    const recorded = (readConfig(db).resolved as Record<string, unknown> | undefined) ?? undefined;
+    // Recordings made before clock.mode existed used the wall-clock runner.
+    base = recorded && !("clock" in recorded) ? { ...recorded, clock: { mode: "realtime" } } : recorded;
     db.close();
   }
   const sourceText = a.configPath ? readFileSync(a.configPath, "utf8") : null;
@@ -54,7 +61,7 @@ export function matchId(c: MatchConfig): string {
 
 export async function runMatch(
   rc: ResolvedConfig,
-  opts: { virtual: boolean; cliArgs: string[]; extraSinks?: FrameSink[]; log?: (l: string) => void },
+  opts: { cliArgs: string[]; extraSinks?: FrameSink[]; log?: (l: string) => void },
 ): Promise<{ file: string; result: MatchResult }> {
   const config = rc.config;
   const teams = config.teams.map(teamFactory);
@@ -85,7 +92,6 @@ export async function runMatch(
     configSections: sections,
     onConfigSection: (s, v) => writer.setConfig(s, v),
     llm,
-    virtualTime: opts.virtual,
     ...(opts.log ? { log: opts.log } : {}),
   });
   const header = runner.header();
@@ -93,13 +99,29 @@ export async function runMatch(
   for (const s of opts.extraSinks ?? []) (s as { begin?: (h: typeof header) => void }).begin?.(header);
   const onSig = () => runner.abort("interrupted");
   process.once("SIGINT", onSig);
+  let result: MatchResult;
   try {
-    const result = await runner.run();
-    return { file, result };
+    result = await runner.run();
   } finally {
     process.off("SIGINT", onSig);
+    try {
+      await llm?.close?.();
+    } catch (e) {
+      opts.log?.(`LLM shutdown failed: ${e instanceof Error ? e.message : e}`);
+    }
     writer.close();
   }
+  if (config.commentator.enabled) {
+    opts.log?.("generating replay commentary (post-match; gameplay is already fixed)…");
+    try {
+      const commentary = await ensureCommentary(file, { config });
+      for (const frame of commentary) for (const sink of opts.extraSinks ?? []) sink.write(frame);
+      opts.log?.(`saved ${commentary.length} team broadcasts`);
+    } catch (e) {
+      opts.log?.(`commentary generation failed: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  return { file, result };
 }
 
 export function relRuns(file: string): string {

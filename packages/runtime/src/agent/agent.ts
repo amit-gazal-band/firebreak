@@ -18,6 +18,8 @@ export interface AgentOptions {
   world: WorldHandle;
   llm: LlmClient;
   system: string;
+  /** Defaults to the world/body pair; sub-agent assignments provide a fresh id per spawn. */
+  sessionId?: string;
   tools: ToolDef[];
   observe(state: WorldState): Observation;
   /** Tools that are not orders (transport, spawn, finish...). */
@@ -56,6 +58,7 @@ export class LlmAgent {
   private inbox: DeliveredMessage[] = [];
   private unread = 0;
   private orderLog: string[] = [];
+  private unsentOrderLog: string[] = [];
   decisions = 0;
   private decisionsThisTick = 0;
 
@@ -136,6 +139,7 @@ export class LlmAgent {
 
   private logOrder(line: string) {
     this.orderLog.push(line);
+    this.unsentOrderLog.push(line);
     const max = this.o.world.config.agent.order_log * 2;
     if (this.orderLog.length > max) this.orderLog.splice(0, this.orderLog.length - max);
   }
@@ -143,7 +147,7 @@ export class LlmAgent {
   private pump(): void {
     if (this.busy || this.stopped || this.reasons.size === 0 || !this.obs || this.o.world.signal.aborted)
       return;
-    // Guards against runaway loops (e.g. message ping-pong in virtual time); never reached at real LLM latency.
+    // Guards against runaway same-tick loops such as message ping-pong.
     if (this.decisionsThisTick >= this.o.world.config.agent.max_decisions_per_tick) return;
     this.decisionsThisTick++;
     this.busy = this.decide().finally(() => {
@@ -155,6 +159,10 @@ export class LlmAgent {
   /** Resolves when no decision is in flight. */
   async idle(): Promise<void> {
     while (this.busy) await this.busy;
+  }
+
+  isIdle(): boolean {
+    return this.busy === null;
   }
 
   stop(): void {
@@ -170,7 +178,9 @@ export class LlmAgent {
     this.decisions += 1;
 
     const window = w.config.agent.message_window;
-    const msgs = this.inbox.slice(-window);
+    const msgs = this.o.llm.retainsSessionContext
+      ? this.inbox.slice(Math.max(0, this.inbox.length - this.unread))
+      : this.inbox.slice(-window);
     const newCount = Math.min(this.unread, msgs.length);
     for (const m of msgs.slice(msgs.length - newCount)) this.o.log?.consumed(m.id, this.id);
     this.unread = 0;
@@ -183,12 +193,15 @@ export class LlmAgent {
       addressed: m.addressed,
     }));
     const extra = this.o.extraPrompt?.();
+    const orderLog = this.o.llm.retainsSessionContext
+      ? this.unsentOrderLog.splice(0)
+      : this.orderLog.slice(-w.config.agent.order_log);
     const user = userPrompt({
       obs,
       reasons,
       messages: promptMsgs,
       newMessageCount: newCount,
-      orderLog: this.orderLog.slice(-w.config.agent.order_log),
+      orderLog,
       ...(extra ? { extra } : {}),
     });
 
@@ -201,9 +214,12 @@ export class LlmAgent {
       payload: { reasons },
     });
     const started = w.now();
+    const wallStarted = performance.now();
     const id = `${w.worldId}-${this.id}-c${++callSeq}`;
+    const decisionSystem = this.o.system;
     const res = await this.o.llm.decide({
-      system: this.o.system,
+      session_id: this.o.sessionId ?? `${w.worldId}:${this.id}`,
+      system: decisionSystem,
       user,
       tools: this.o.tools,
       maxTurns: w.config.llm.max_turns_per_decision,
@@ -218,12 +234,13 @@ export class LlmAgent {
       agent_id: this.id,
       started_ms: started,
       ended_ms: w.now(),
+      latency_ms: performance.now() - wallStarted,
       input_tokens: res.input_tokens,
       output_tokens: res.output_tokens,
       cache_read_tokens: res.cache_read_tokens,
       cost_usd: res.cost_usd,
       cost_estimated: res.cost_estimated,
-      ...(w.config.record.prompts ? { prompt: user } : {}),
+      ...(w.config.record.prompts ? { prompt: `SYSTEM\n${decisionSystem}\n\nUSER\n${user}` } : {}),
       response: res.response,
       tool_calls: res.tool_calls,
       ...(res.error ? { error: res.error } : {}),

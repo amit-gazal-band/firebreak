@@ -1,18 +1,21 @@
 import { DEFAULT_GAME_CONFIG, type GameConfig } from "@firebreak/engine";
 import { parse } from "yaml";
 
-export type LlmBackend = "api" | "claude-code";
+export type LlmBackend = "api" | "claude-code" | "openai" | "codex";
+export type ClockMode = "synchronized" | "realtime";
 
 /** The full, resolved configuration of a match (SPEC §11). */
 export interface MatchConfig {
   seed: number;
   ticks: number;
   tick_ms: number;
+  clock: { mode: ClockMode };
   teams: string[];
   llm: {
     backend: LlmBackend;
     model: string;
     temperature: number;
+    reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh" | "max";
     max_tokens: number;
     max_turns_per_decision: number;
   };
@@ -40,7 +43,17 @@ export interface MatchConfig {
     order_log: number;
     max_decisions_per_tick: number;
   };
+  /** 0 keeps a sub-agent alive until it reports completion/blockage; positive values opt into a hard cap. */
   subagents: { max_lifetime_ticks: number };
+  commentator: {
+    enabled: boolean;
+    interval_ticks: number;
+    /** "same" inherits the gameplay backend/model. */
+    backend: LlmBackend | "same";
+    model: string;
+    max_tokens: number;
+    reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh" | "max";
+  };
   band: { agents_file: string; rest_url: string; ws_url: string };
   record: { dir: string; prompts: boolean };
 }
@@ -51,11 +64,13 @@ export const DEFAULT_MATCH_CONFIG: MatchConfig = {
   seed: 42,
   ticks: G.ticks,
   tick_ms: 5000,
-  teams: ["none", "perfect", "band", "subagents"],
+  clock: { mode: "synchronized" },
+  teams: ["none", "perfect", "chat-mentions", "chat-broadcast"],
   llm: {
     backend: "claude-code",
     model: "claude-haiku-4-5-20251001",
     temperature: 0.2,
+    reasoning_effort: "low",
     max_tokens: 1024,
     max_turns_per_decision: 3,
   },
@@ -78,7 +93,15 @@ export const DEFAULT_MATCH_CONFIG: MatchConfig = {
     clear_debris_ticks: G.clear_debris_ticks,
   },
   agent: { message_window: 30, heartbeat_ticks: 3, order_log: 5, max_decisions_per_tick: 3 },
-  subagents: { max_lifetime_ticks: 8 },
+  subagents: { max_lifetime_ticks: 0 },
+  commentator: {
+    enabled: false,
+    interval_ticks: 10,
+    backend: "claude-code",
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 2400,
+    reasoning_effort: "low",
+  },
   band: {
     agents_file: "band_agents.yaml",
     rest_url: "https://app.band.ai",
@@ -151,9 +174,19 @@ export function validateConfig(c: MatchConfig): void {
   if (!Number.isInteger(c.seed)) throw new Error("seed must be an integer");
   if (c.ticks < 1) throw new Error("ticks must be >= 1");
   if (c.tick_ms < 0) throw new Error("tick_ms must be >= 0");
-  if (!["api", "claude-code"].includes(c.llm.backend))
+  if (!["synchronized", "realtime"].includes(c.clock.mode))
+    throw new Error(`unknown clock.mode ${c.clock.mode}`);
+  if (!["api", "claude-code", "openai", "codex"].includes(c.llm.backend))
     throw new Error(`unknown llm.backend ${c.llm.backend}`);
   if (c.teams.length === 0) throw new Error("teams must not be empty");
+  if (!Number.isInteger(c.commentator.interval_ticks) || c.commentator.interval_ticks < 1)
+    throw new Error("commentator.interval_ticks must be an integer >= 1");
+  if (c.commentator.max_tokens < 1) throw new Error("commentator.max_tokens must be >= 1");
+  if (
+    c.commentator.backend !== "same" &&
+    !["api", "claude-code", "openai", "codex"].includes(c.commentator.backend)
+  )
+    throw new Error(`unknown commentator.backend ${c.commentator.backend}`);
 }
 
 const SECRET_KEY = /(api[_-]?key|token|secret|password|authorization)/i;

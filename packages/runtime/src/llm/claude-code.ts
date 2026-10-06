@@ -1,4 +1,4 @@
-import { createSdkMcpServer, query, tool } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, deleteSession, query, tool } from "@anthropic-ai/claude-agent-sdk";
 import { tmpdir } from "node:os";
 import { costUsd } from "./pricing";
 import type { DecideRequest, DecideResult, LlmClient } from "./types";
@@ -31,12 +31,13 @@ interface Usage {
 
 /**
  * `claude-code` backend: Claude Agent SDK on a Claude subscription login (SPEC §6.3).
- * One fresh query() per decision, so decisions are stateless like the `api` backend.
- * The result is returned as soon as the decision is complete; the subprocess is shut
- * down in the background (waiting for it costs ~2 s per call).
+ * Each logical agent owns one Claude session. A decision uses one query process, and
+ * subsequent decisions resume its transcript so prior turns are not resent as new context.
  */
 export class ClaudeCodeClient implements LlmClient {
   readonly backend = "claude-code" as const;
+  readonly retainsSessionContext = true;
+  private sessions = new Map<string, string>();
 
   constructor(readonly model: string) {}
 
@@ -50,7 +51,6 @@ export class ClaudeCodeClient implements LlmClient {
       cost_usd: 0,
       cost_estimated: true,
     };
-    let turnHadError = false;
     const server = createSdkMcpServer({
       name: SERVER,
       version: "0.1.0",
@@ -58,7 +58,6 @@ export class ClaudeCodeClient implements LlmClient {
         tool(t.name, t.description, t.schema, async (args) => {
           const r = await req.execute(t.name, args as Record<string, unknown>);
           out.tool_calls.push({ name: t.name, input: args, result: r.text });
-          turnHadError ||= r.isError;
           return { content: [{ type: "text" as const, text: r.text }], isError: r.isError };
         }),
       ),
@@ -68,7 +67,7 @@ export class ClaudeCodeClient implements LlmClient {
     const onAbort = () => ac.abort();
     req.signal.addEventListener("abort", onAbort, { once: true });
     const usage = new Map<string, Usage>();
-    let sdkCost: number | null = null;
+    let sdkSessionId: string | null = null;
     const q = query({
       prompt: req.user,
       options: {
@@ -83,7 +82,8 @@ export class ClaudeCodeClient implements LlmClient {
         strictMcpConfig: true,
         allowedTools: req.tools.map((t) => `mcp__${SERVER}__${t.name}`),
         settingSources: [],
-        persistSession: false,
+        persistSession: true,
+        ...(this.sessions.get(req.session_id) ? { resume: this.sessions.get(req.session_id) } : {}),
         cwd: tmpdir(),
         env: subscriptionEnv(),
         abortController: ac,
@@ -94,6 +94,7 @@ export class ClaudeCodeClient implements LlmClient {
         const next = await q.next();
         if (next.done) break;
         const msg = next.value as { type: string; [k: string]: unknown };
+        if (typeof msg.session_id === "string") sdkSessionId = msg.session_id;
         if (msg.type === "rate_limit_event") {
           const info = msg.rate_limit_info as
             { status?: string; resetsAt?: number; rateLimitType?: string } | undefined;
@@ -136,17 +137,7 @@ export class ClaudeCodeClient implements LlmClient {
             chars,
           });
           if (out.fatal) break;
-        } else if (msg.type === "user") {
-          // Tool results of a turn came back. Like the api backend, continue only when a call was rejected.
-          const content = (msg.message as { content: unknown }).content;
-          const hasResults =
-            Array.isArray(content) && content.some((b) => (b as { type?: string }).type === "tool_result");
-          if (hasResults) {
-            if (!turnHadError) break;
-            turnHadError = false;
-          }
         } else if (msg.type === "result") {
-          sdkCost = msg.total_cost_usd as number;
           const subtype = msg.subtype as string;
           if (subtype !== "success" && subtype !== "error_max_turns") out.error = `claude-code: ${subtype}`;
           break;
@@ -163,6 +154,7 @@ export class ClaudeCodeClient implements LlmClient {
       ac.abort();
       void q.return(undefined).catch(() => {});
     }
+    if (sdkSessionId) this.sessions.set(req.session_id, sdkSessionId);
     let cacheWrite = 0;
     for (const u of usage.values()) {
       out.input_tokens += u.input + u.cacheRead + u.cacheWrite;
@@ -171,14 +163,19 @@ export class ClaudeCodeClient implements LlmClient {
       out.cache_read_tokens += u.cacheRead;
       cacheWrite += u.cacheWrite;
     }
-    out.cost_usd =
-      sdkCost ??
-      costUsd(this.model, {
-        input: out.input_tokens - out.cache_read_tokens - cacheWrite,
-        output: out.output_tokens,
-        cacheRead: out.cache_read_tokens,
-        cacheWrite,
-      }).usd;
+    // SDK total_cost_usd is cumulative after resume. Price only this decision's usage.
+    out.cost_usd = costUsd(this.model, {
+      input: out.input_tokens - out.cache_read_tokens - cacheWrite,
+      output: out.output_tokens,
+      cacheRead: out.cache_read_tokens,
+      cacheWrite,
+    }).usd;
     return out;
+  }
+
+  async close(): Promise<void> {
+    const ids = [...new Set(this.sessions.values())];
+    this.sessions.clear();
+    await Promise.all(ids.map((id) => deleteSession(id, { dir: tmpdir() }).catch(() => undefined)));
   }
 }

@@ -18,7 +18,7 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
     burnout_ticks: 10,
     house_destroy_ticks: 3,
   },
-  civilian_deadline: 15,
+  civilian_deadline: 17,
   forecast_lead: 6,
   water_capacity: 3,
   clear_debris_ticks: 2,

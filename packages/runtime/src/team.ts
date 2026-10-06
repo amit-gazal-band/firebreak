@@ -34,7 +34,7 @@ export interface TeamController {
   setup(world: WorldHandle): Promise<void>;
   /** Called after every tick, including tick 0, with the events of that tick. */
   onTick(state: WorldState, events: WorldEvent[]): void;
-  /** Resolves when the controller has no work in flight (used by the virtual clock). */
+  /** Resolves when no decision, delivery, report, or newly triggered cascade is in flight. */
   idle(): Promise<void>;
   /** Stop agents and clean up external resources. */
   teardown(): Promise<void>;

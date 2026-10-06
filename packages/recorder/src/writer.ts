@@ -95,8 +95,8 @@ export class RecordingWriter implements FrameSink {
       case "llm":
         this.db
           .prepare(
-            `INSERT INTO llm_call (id, world_id, agent_id, started_ms, ended_ms, input_tokens, output_tokens, cache_read_tokens,
-             cost_usd, cost_estimated, prompt, response, tool_calls_json, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO llm_call (id, world_id, agent_id, started_ms, ended_ms, latency_ms, input_tokens, output_tokens, cache_read_tokens,
+             cost_usd, cost_estimated, prompt, response, tool_calls_json, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             f.id,
@@ -104,6 +104,7 @@ export class RecordingWriter implements FrameSink {
             f.agent_id,
             Math.round(f.started_ms),
             Math.round(f.ended_ms),
+            f.latency_ms === undefined ? null : Math.round(f.latency_ms),
             f.input_tokens,
             f.output_tokens,
             f.cache_read_tokens,
@@ -116,6 +117,8 @@ export class RecordingWriter implements FrameSink {
           );
         log("llm", f.id);
         break;
+      case "commentary":
+        throw new Error("commentary belongs in a replay sidecar, not the immutable match recording");
       case "end":
         this.finish(f);
         break;

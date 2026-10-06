@@ -28,7 +28,7 @@ Several teams play the same game on identical copies of the same world, at the s
 | **World** | One team's copy of the game map and state |
 | **Team** | 5 agents that share one communication method |
 | **Agent** | An LLM-driven player with one role and one body in the world |
-| **Tick** | One step of the world clock (default 5 s). The world advances every tick whether agents acted or not |
+| **Tick** | One deterministic world step (default 5 simulated seconds). In the default synchronized mode, all decisions and communication cascades for the current state settle before it advances |
 | **Seed** | Determines the map, every scheduled event, and every random roll |
 | **Order** | An agent's current standing action (e.g. "move to (4,7)"), executed by the engine tick after tick until it completes or is blocked |
 | **Recording** | The stored log of a match, which is enough to replay it fully |
@@ -71,7 +71,7 @@ Agents issue **orders**, not single steps. The engine carries out the order each
 
 - Orders that act on a target (`extinguish`, `refill`, `clear_debris`, `build_firebreak`, `rescue`) first move the agent next to the target (8-neighbour), then act.
 - A `move_to` onto a tile the agent cannot stand on (water, a house, off-road for the rescuer) is redirected to the nearest tile it can stand on, and the tool result says so. Models misread grid coordinates often; rejecting those orders cost a retry turn each time.
-- An order that arrives before a tick boundary takes effect on that tick. A new order replaces the current one.
+- In synchronized mode, every accepted order from the current decision barrier takes effect on the next engine step. In legacy real-time mode, an order must arrive before the wall-clock boundary. A new order replaces the current one.
 - A blocked order carries a reason and a human-readable detail, e.g. `no_path: debris at (17,6) blocks the way; the engineer can clear it`.
 
 ### 4.4 World dynamics (applied each tick, in this order)
@@ -138,10 +138,10 @@ Every agent gets a compact JSON observation whenever it is woken (see 6.2):
 
 - **Shared randomness.** Every random roll comes from `hash(seed, tick, x, y, purpose)`, not from a stream. So the same tile gets the same roll in every world on the same tick, even though the worlds have drifted apart. Luck is identical across teams.
 - **Scheduled events** are generated from the seed before the match and are identical in every world.
-- **Same model, same settings** (model id, temperature, max tokens) for every LLM call in the match, orchestrator included.
+- **Same model, same settings** (model id, supported sampling/reasoning effort, max tokens) for every LLM call in the match, orchestrator included.
 - **Same base prompt** for every agent. Only a short section describing the communication tools differs between teams (section 7).
 - **Same context budget.** Each agent's prompt holds its role, its latest observation, its last 30 messages, and a short log of its own recent orders. Every team gets the same limits.
-- **Recorded model latency.** Every LLM call's latency is recorded, so a slow-API streak can be spotted and a match discarded.
+- **Recorded model latency.** Every LLM call's actual wall latency is recorded separately from logical replay time. In synchronized mode it affects run time, not the number of world steps available to react; in legacy real-time mode it can affect outcomes.
 
 ## 6. Agent runtime
 
@@ -157,6 +157,16 @@ loop until match ends:
 
 At most one LLM call per agent is in flight. Triggers that arrive during a call are merged and handled by the next call.
 
+The default clock is **synchronized**. For each logical tick the runtime:
+
+1. presents the current state to every agent with a wake trigger;
+2. waits for every in-flight decision, transport delivery, sub-agent report, orchestrator response, and newly triggered follow-up decision to settle;
+3. commits the latest accepted order for each body;
+4. advances every world exactly one deterministic engine step; and
+5. emits the new observations and wake triggers.
+
+An active order continues one engine step at a time without requiring another model call. The `--realtime` option preserves the legacy clock: the engine advances every `tick_ms` of wall time even when a model call or delivery is still in flight. `--virtual` is a compatibility alias for synchronized mode.
+
 ### 6.2 Wake triggers
 
 - A message was delivered to this agent.
@@ -165,30 +175,39 @@ At most one LLM call per agent is in flight. Triggers that arrive during a call 
 - The wind changed (or, for the scout, a new forecast arrived).
 - Heartbeat: 3 ticks passed with no other trigger.
 
-At most 3 decisions per agent per tick. At real model latency (~4 s per decision) this never triggers; it prevents runaway loops such as message ping-pong in virtual time.
+At most 3 decisions per agent per tick. This bounds same-tick message ping-pong while still allowing ordinary send/deliver/respond cascades to settle before the synchronized barrier closes.
 
 ### 6.3 LLM backends
 
-The runtime calls models through one interface, `LlmClient.decide(prompt, tools) → { toolCalls, usage, latency }`. It has two backends:
+The runtime calls models through one interface, `LlmClient.decide(prompt, tools) → { toolCalls, usage, latency }`. It has four backends:
 
 | Backend | Auth | Implementation | Notes |
 |---|---|---|---|
 | `api` | `ANTHROPIC_API_KEY` | `@anthropic-ai/sdk` Messages API with tool use | Lowest latency, billed per token |
-| `claude-code` (default) | Claude subscription: the local `claude` login, or `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` | `@anthropic-ai/claude-agent-sdk` `query()`, with a custom `systemPrompt`, built-in tools disabled, and game tools served through `createSdkMcpServer` | Not billed per token. Subject to the subscription's usage limits. ~4 s per decision |
+| `claude-code` (default) | Claude subscription: the local `claude` login, or `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` | One Claude session per logical game agent, resumed through `@anthropic-ai/claude-agent-sdk`; built-in tools are disabled and game tools use `createSdkMcpServer` | Not billed per token. Subject to the subscription's usage limits |
+| `codex` | ChatGPT subscription: the local `codex` login | One long-lived `codex app-server` process; one isolated ephemeral thread per logical game agent; game actions are client-executed dynamic tools | Not billed as API usage. Subject to the ChatGPT/Codex plan's usage limits |
+| `openai` | `OPENAI_API_KEY` | OpenAI Responses API with function tools | Stateless (`store: false`), billed per token |
 
 Settings the `claude-code` backend needs to behave like the `api` backend (measured, see docs/TUNING.md):
 - `thinking: { type: "disabled" }`. Claude Code enables adaptive thinking by default, which made decisions take 10–40 s.
 - `strictMcpConfig: true` and `settingSources: []`. Otherwise the account's claude.ai connectors and user settings are loaded, adding ~80k tokens to some calls.
 - `ANTHROPIC_API_KEY` and parent `CLAUDE_CODE_*` variables are removed from the subprocess environment, so a subscription run can never bill an API key.
-- The decision returns as soon as the tool results come back without an error (like the `api` backend); the subprocess is shut down in the background.
+- A logical agent's first decision creates a persisted Claude session; later decisions resume it. Firebreak waits for the result event so the transcript is complete before it can be resumed, then deletes match-created sessions at backend shutdown.
+
+The `codex` backend applies the same fairness boundary:
+- `OPENAI_API_KEY`, `CODEX_API_KEY`, and `CODEX_ACCESS_TOKEN` are removed from the subprocess environment. Startup also verifies that App Server reports `account.type = chatgpt`, so it cannot silently use API billing.
+- A private temporary `CODEX_HOME` contains only a protected copy of the saved ChatGPT login. User config, stored sessions, AGENTS files, plugins, apps, skills, hooks, and MCP servers are not inherited.
+- Shell, web search, apps, plugins, and Codex multi-agent tools are disabled. The thread is read-only and sees only the Firebreak dynamic tools supplied for that role.
+- The App Server process is reused. Each peer agent and the sub-agent orchestrator gets one isolated ephemeral thread for the match; every spawned worker gets a new thread for its assignment. Later decisions use `turn/start` on that same thread. Any loaded instruction source is rejected.
+- Firebreak's `subagents` condition is unchanged: only its recorded orchestrator can spawn the simulator's ephemeral worker bodies. Codex cannot spawn its own hidden subagents.
 
 - **One backend per match.** All teams in a match use the same backend, so the comparison stays fair. The backend is recorded with the match (§8.2).
-- **Compare within a backend.** Latency differs between backends, so reports compare matches from the same backend only (and the same `tick_ms`).
-- **Stateless calls in both backends.** Every decision is a fresh call with a freshly built prompt (§6.1). No backend-side session memory, so both backends see exactly the same input.
-- **Cost:** `api` records real cost from token usage. `claude-code` records tokens plus the SDK's `total_cost_usd` as an *estimated* cost.
-- **Usage limits:** a match is about 1,200 model calls. Before a `claude-code` match or batch starts, the runner warns that it may hit the subscription's usage limits. If a limit is hit, the match is aborted and marked `aborted: usage_limit`, not scored.
+- **Compare within a backend and clock mode.** Models differ in behavior, prompts/tokenization, and latency accounting, so formal reports keep the backend/model fixed. Never mix synchronized and legacy real-time recordings; real-time outcomes additionally depend on provider latency.
+- **Session boundaries.** Subscription backends retain one provider conversation per logical agent. They send the current observation and only newly delivered messages/order updates each decision; previous turns remain in that agent's private history. The billed `api` and `openai` backends remain stateless and therefore receive the bounded context window in every request. All teams in a match use the same backend and session policy.
+- **Cost:** `api` and `openai` calculate billed cost from token usage and the recorded model price. `claude-code` and `codex` record an *estimated API-equivalent cost* for comparison; subscription runs are not API-billed.
+- **Usage limits:** a match is about 1,200 model calls. Before a subscription match or batch starts, the runner warns that it may hit the plan's usage limits. If a limit is hit, the match is aborted and marked `aborted: usage_limit`, not scored.
 - Default model: `claude-haiku-4-5-20251001` (fast and cheap, which keeps ticks short). Configurable per match.
-- **Per-match budget cap** (tokens, and $ for `api`). The match aborts cleanly if it's exceeded.
+- **Per-match budget cap** (tokens, and API-equivalent $). The match aborts cleanly if it's exceeded.
 
 ### 6.4 Tools
 
@@ -199,7 +218,7 @@ Everything an agent does goes through tool calls. There is no free-text parsing.
 - **An order tool returns right away**, without waiting for the order to finish. It returns either `accepted, takes effect on tick N`, or a validation error (e.g. "not adjacent", "no water", "unknown civilian"). Completion and blocking arrive later as wake triggers (§6.2).
 - **At most one order per decision.** The last valid one wins.
 - **Communication tools** come from the team's transport (§7). The reference teams have none.
-- **Sub-agent team:** sub-agents get their role's order tools plus `finish(report)`. The orchestrator gets only `spawn(body, brief)` and `wait()`.
+- **Sub-agent team:** sub-agents get their role's order tools plus `finish(outcome, report)`. The orchestrator gets only `spawn(body, brief, done_when)` and `wait()`.
 - **Turn limit:** one decision allows up to 3 model turns, so the model can correct itself after a validation error. After that the decision ends.
 - Tool definitions are versioned and recorded with each match (§8.2).
 
@@ -207,8 +226,8 @@ Everything an agent does goes through tool calls. There is no free-text parsing.
 
 Two kinds of team controller:
 
-- **Peer teams** (none, perfect, band, slack, linear): 5 agents, each running the loop in 6.1, talking through a `Transport`.
-- **Orchestrated team** (subagents): an orchestrator plus spawned sub-agents (7.4).
+- **Peer teams** (none, perfect, chat-mentions, chat-broadcast, band, slack, linear): 5 agents, each running the loop in 6.1, talking through a `Transport`.
+- **Orchestrated team** (subagents): an orchestrator plus spawned sub-agents (7.5).
 
 ```ts
 interface Transport {
@@ -228,7 +247,15 @@ No communication tools. Each agent knows only its own observation.
 ### 7.2 `perfect` (upper bound)
 No communication tools. Each agent's observation is the **union** of all teammates' observations, plus every teammate's current order and the scout's forecast, delivered instantly. Wake triggers are computed on that union.
 
-### 7.3 `band`
+### 7.3 `chat-mentions` and `chat-broadcast`
+
+Both deterministic local-chat teams expose the same `send_message(text, mentions[])` tool and use one `#team` room. `mentions` names intended recipients in both conditions.
+
+- `chat-mentions`: only intended recipients receive the message and wake.
+- `chat-broadcast`: every other teammate receives the message and wakes; the `addressed` flag remains true only for intended recipients so noise can be measured.
+- Delivery is immediate and in-process, removing credentials, external rate limits, and network variance. These conditions measure delivery topology, not a specific product.
+
+### 7.4 `band`
 - 5 Band agents (external agents on the platform), connected with `@band-ai/sdk` using `GenericAdapter` as the transport only. The LLM loop stays ours, identical to the other teams.
 - A team room containing all 5 agents is created at setup.
 - Tools exposed: `send_message(room, text, mentions[])`, `create_room(name, participants[])`, `add_participant(room, agent)`. They map to the Band REST calls behind `band_send_message`, `band_create_chatroom`, and `band_add_participant`.
@@ -237,25 +264,25 @@ No communication tools. Each agent's observation is the **union** of all teammat
 - Rooms are real Band rooms and stay in the account after the match, so a match's conversation can also be read in the Band app.
 - Credentials: `band_agents.yaml` (git-ignored), one external agent per role.
 
-### 7.4 `subagents`
+### 7.5 `subagents`
 Follows the real sub-agent pattern (Claude Agent SDK / Task tool, LangGraph supervisor, agents-as-tools).
 
 - **Orchestrator:** a 6th LLM with no body. It sees only what sub-agents report. Its tokens are included in the team's cost.
-- **Tools:** `spawn(body, brief)` starts a sub-agent that controls one body (at most one live sub-agent per body). The orchestrator is woken whenever a report arrives and handles reports one at a time as they come in. It never waits for all of them.
-- **Sub-agent:** runs the same agent loop and gets **only its brief** (no memory of earlier spawns) plus its own observations. Tools: its role's order tools and `finish(report)` (§6.4).
-- **Lifetime:** a sub-agent ends when it calls `finish`, when its order is blocked and it can't recover, or after 8 ticks (then an automatic report is produced).
-- **Report:** the sub-agent's text **plus an automatic structured list of everything it saw** (generous on purpose).
+- **Tools:** `spawn(body, brief, done_when)` starts a sub-agent that controls one body (at most one live sub-agent per body). `done_when` is a concrete, observable acceptance contract. Explicitly open-ended assignments such as watching or patrolling until the match ends are rejected. The orchestrator is woken whenever a report arrives and handles reports one at a time as they come in. It never waits for all of them.
+- **Sub-agent:** runs the same agent loop and gets **only its brief** (no memory of earlier spawns), its own current observations, accumulated sightings from this assignment, and its recent order outcomes. Tools: its role's order tools and `finish(outcome, report)` (§6.4).
+- **Lifetime:** a sub-agent owns the assignment until it reports verified completion or an unrecoverable blockage. It re-checks `done_when` after every observation or order result and must finish immediately once all criteria are satisfied. There is no fixed lifetime by default. `subagents.max_lifetime_ticks` may opt a run into a hard safety cutoff; `0` disables it.
+- **Report:** the sub-agent's text **plus an automatic structured list of everything it saw** (generous on purpose). The report event also records its outcome, spawn tick, assignment age, and whether its age crossed the diagnostic long-running threshold (one quarter of match length, minimum eight ticks). That flag never interrupts or terminates work.
 - **Faithful limits:** no incoming channel while running, no talking between peers, no interrupting.
 - Bodies with no live sub-agent keep their last order, then wait.
 - The orchestrator is also woken by a heartbeat every 3 ticks while any body has no sub-agent, and its prompt tells it to keep every body busy (generous on purpose).
 - Spawns and reports are recorded as messages (`channel: "spawn"` and `"report"`), so the viewer draws them as hub-and-spoke lines to the HQ icon, and the metrics can measure the orchestrator's queue time.
 
-### 7.5 `slack` (v1)
+### 7.6 `slack` (v1)
 - 5 Slack bot users in one workspace, one `#team-<match>` channel, Socket Mode (real-time push).
 - Tools: `post(text)`, `reply_in_thread(thread_ts, text)`.
 - Every channel message is delivered to every agent (that's how channels work). Real Slack rate limits apply.
 
-### 7.6 `linear` (v1)
+### 7.7 `linear` (v1)
 - 5 Linear agents/users, one team and project per match, webhooks (not polling).
 - Tools: `create_issue(title, description, assignee?)`, `comment(issue, text)`, `set_status(issue, status)`, `assign(issue, agent)`.
 - An agent is sent events for issues assigned to it, issues it's subscribed to, and comments that mention it.
@@ -279,12 +306,12 @@ Each match is stored in one SQLite file: `runs/<match-id>.sqlite`.
 | `tick_state` | world_id, tick, **full world state** (JSON), state hash |
 | `event` | id, world_id, t_ms (since match start), tick, type, agent_id, payload (JSON) |
 | `message` | id, world_id, from, to[] (or channel/room), text, sent_at, delivered_at per recipient, consumed_at per recipient |
-| `llm_call` | id, world_id, agent_id, started_at, ended_at, input/output tokens, cost, prompt, response, tool calls |
+| `llm_call` | id, world_id, agent_id, logical start/end, actual wall latency, input/output tokens, cost, prompt, response, tool calls |
 
 **The configuration is always stored with the recording**, so every match documents exactly how it was produced:
 
 - **Resolved config:** the final values after defaults, the config file, and CLI overrides were merged, plus the original config file text and the CLI arguments.
-- **LLM:** backend (`api` / `claude-code`), model id, temperature, max tokens, turn limit.
+- **LLM:** backend (`api` / `claude-code` / `codex` / `openai`), model id, temperature, reasoning effort, max tokens, turn limit.
 - **Prompts and tools:** the full text of every role prompt and transport tools section, and every tool definition, each with a content hash.
 - **Code:** engine version, git commit, a dirty-tree flag, and package versions (e.g. `@band-ai/sdk`, the Agent SDK).
 - **Environment:** OS, Node version, and the Band / Slack / Linear environment URLs.
@@ -297,7 +324,8 @@ Event types: `order_issued`, `order_completed`, `order_blocked`, `wake`, `spawn`
 Why store the **full state every tick**: at 20×20 × 60 ticks × 6 worlds it takes a few MB at most. Seeking is then instant (load one snapshot), and old recordings keep working after engine rules change.
 
 ### 8.3 Timeline
-- Time in a recording is **continuous milliseconds** since the match started, not just ticks. Messages and LLM calls sit at their real timestamps between ticks.
+- In synchronized recordings, `t_ms` is **logical simulation time** (`tick × tick_ms`). Decisions and same-tick communication share that logical position; `llm_call.latency_ms` preserves actual provider/process wall time separately.
+- In legacy real-time recordings, `t_ms` is continuous wall-relative match time and messages and calls can sit between tick boundaries.
 - The player keeps a virtual clock `t = t0 + speed × real_elapsed`. At each frame it:
   - draws world state at `floor(t / tick_ms)`, with agent positions interpolated toward the next tick,
   - shows every message and event with `t_ms ≤ t` (message lines animate at their `sent_at`/`delivered_at`).
@@ -305,6 +333,8 @@ Why store the **full state every tick**: at 20×20 × 60 ticks × 6 worlds it ta
 
 ### 8.4 Live and replay use the same code
 The viewer only ever consumes an **event stream**. Live mode is a websocket that tails the match as it's written. Replay mode reads the recording and releases events on the virtual clock. Same renderer, same panels.
+
+A completed replay ends at its final simulation tick. The runner does not wake agents after applying the last playable tick and rejects orders arriving after play has closed. In legacy real-time mode, draining a call already in flight may delay file closure, but that cleanup cannot change the world or extend the replay scrubber.
 
 ### 8.5 Verification
 `firebreak verify <match>` re-runs the engine from the seed and the recorded orders (their arrival ticks) and compares the state hash on every tick. This catches engine non-determinism and proves the recording is complete. LLMs are never re-run.
@@ -314,15 +344,16 @@ The viewer only ever consumes an **event stream**. Live mode is a websocket that
 
 ## 9. Viewer
 
-- **Layout:** a grid of boards, one per team (2×2 for four teams, 3×2 with the reference teams), each labelled with team name and live score.
+- **Layout:** a responsive single-row comparison of team cards, each labelled once with its human-facing team name and live score. Every selected team stays on the same screen and corresponding sections remain aligned; hiding teams gives each remaining card more room. Maps and communication graphs remain square. In combined mode, each card places equal-sized map and graph squares side by side. The multi-metric comparison chart is a separate collapsible block below the cards.
 - **Board:** the tile map, fire intensity, agents as role icons (§9.3), civilians with countdown rings, and fog of war shaded by the team's combined vision.
 - **Message traffic:** messages drawn as lines between agents while in flight (hub-and-spoke for sub-agents, broadcast for a Slack channel, targeted for Band rooms).
-- **Counters** under each board: score, $ spent, messages, stale actions, idle ticks, missed joint tasks.
+- **Mission and operational statistics:** civilians saved/lost, fires out/active, houses standing/destroyed, cost, model calls, messages, stale actions, idle ticks, and uncovered intensity-3 fire-ticks.
 - **Score breakdown** under each board's score, plus score pop-ups, a score log and a score chart (§9.5).
 - **Feed** under each board's counters: messages, agent actions (tool calls), or both (§9.2, §9.4).
 - **Communication graph** per team, shown in place of the board or beside it (§9.1).
+- **AI commentary:** an omniscient, post-match broadcast saved as a sidecar and displayed beneath each team without affecting the match.
 - **Inspector:** click an agent to see its latest observation, its prompt's message window, and its last LLM response.
-- **Controls:** play/pause, speed (0.5–10×), timeline scrubber with event markers, step ±1 tick, choose which teams are shown.
+- **Controls:** play/pause, speed (0.5–10×), timeline scrubber with one labelled event row per visible team (global wind/bridge events span all rows), step ±1 tick, choose which teams are shown, and persistent visibility switches for the score breakdown, mission stats, operational stats, messages, AI commentary, and the comparison chart. The agent inspector distinguishes the last completed decision from a model call that is still in flight, so provider latency is not mistaken for deliberate idling.
 - Stack: Vite + TypeScript + Canvas 2D (six 20×20 boards are far below what needs WebGL). The build is one self-contained `index.html`, which the server serves and `export` embeds a recording into.
 - URL parameters: `?rec=<file>`, `?live`, `?t=<seconds>`, `?paused`, `?speed=<n>`, `?view=board|graph|both`, `?feed=messages|actions|all`.
 
@@ -349,12 +380,12 @@ Shows the *shape* of a team's communication: who talks to whom, and how much.
 - **Follow newest:** while the feed is scrolled to the bottom it follows new messages. Once the user scrolls up it stays put and shows a "↓ new messages" button that jumps back to the bottom.
 - Each line shows the tick, sender → recipients, and text. Clicking a line seeks the player to that message's `sent_at`.
 - Seeking rebuilds the feed for the new `t`.
-- **No page scroll.** The whole viewer (controls, every card with its board and feed) always fits the window, collapsed or expanded. When the feeds expand, the layout recomputes the board size with the expanded feed height, so every board shrinks by the same amount instead of the page growing a scrollbar. Collapsing restores the larger boards. Only the feed itself scrolls. The board keeps a readable minimum size; if the window is too small even for that, the feed gives up lines before the page scrolls. If even three lines don't fit (e.g. *both* at 1440×900 with four or more teams), the boards area scrolls, in the grid that hides the least, rather than cutting a card off.
+- **Responsive surfaces.** Selected teams never wrap into vertical rows. Board-only maps and graph-only communication diagrams use the available card width and height. Communication graphs stay square so their fixed node geometry remains comparable. Combined mode places equal-sized map and graph squares side by side; selecting fewer teams enlarges both. Expanded feeds give up lines before forcing the comparison beyond the available presentation height.
 - A pair filter from the graph (§9.1) shows as a removable chip above the feed.
 
 ### 9.3 Role icons
 
-Agents are drawn as role icons instead of lettered circles, so a viewer can tell who is who without a legend.
+Agents are drawn as role icons instead of lettered circles. One global legend uses the exact same icons; cards do not repeat it.
 
 | Role | Icon |
 |---|---|
@@ -368,7 +399,7 @@ Agents are drawn as role icons instead of lettered circles, so a viewer can tell
 - **Role colour stays.** The icon sits on a disc in the existing role colour, so colour and shape both identify the role (colour alone fails for colour-blind viewers).
 - **State stays visible:** the white ring when selected, the red ring when the order is blocked, and the firefighter's water pips under the icon, as today.
 - **Readable at small sizes.** Icons are simple silhouettes that still read at the smallest board size in the 3×2 layout (about 14 px). Each icon is rasterised once per size to an offscreen canvas, not re-traced every frame.
-- **Same icons everywhere:** the board, the communication graph nodes (§9.1), feed lines (§9.2, §9.4), the inspector header, and a small role legend in the card header.
+- **Same icons everywhere:** the board, the communication graph nodes (§9.1), feed lines (§9.2, §9.4), inspector header, and global viewer legend. The bodyless orchestrator is labelled `HQ` rather than using a role-shaped icon.
 - Civilians get a person icon in place of the plain dot; the countdown ring stays.
 
 ### 9.4 Agent actions (tool calls)
@@ -393,13 +424,12 @@ The feed can show what agents **do**, not just what they say. Every tool call an
 
 The score must be explainable at a glance: what it's made of, what changed it, and who earned it.
 
-- **Breakdown under the score:** four chips that add up to the total, e.g.
-  `🏠 9 × 5 = 45 · 🧍 2 × 10 = 20 · ☠ 1 × −20 = −20 · 🔥 7 × 1 = 7 → 52`.
-  Hovering a chip explains the rule ("+5 for each house still standing; 10 at start, 1 destroyed"). The chips use the §9.3 icon set; emoji above are only for this document.
-- **Starting score:** a small `started at 50 (10 houses)` note, so a score that drops from 50 at tick 0 isn't a surprise (§4.6).
+- **Breakdown under the score:** four aligned components behind the total already shown in the card header, e.g.
+  `🏠 9 × 5 = 45 · 🧍 2 × 10 = 20 · ☠ 1 × −20 = −20 · 🔥 7 × 1 = 7`.
+  Hovering a component explains the rule ("+5 for each house still standing; 10 at start, 1 destroyed"). The components use the §9.3 icon set; emoji above are only for this document. The house calculation already exposes the initial score, so cards do not repeat it on a separate row. This block has its own persisted visibility switch in **Panels**.
 - **Event pop-ups:** when a scoring event happens, a floating label naming **what happened** rises from its tile on the board (green for gains, red for losses) and fades within about a tick of game time: `Civilian evacuated` (`civilian_evacuated`), `Civilian lost` (`civilian_lost`), `Fire put out` (`extinguished`), `House destroyed` (`house_destroyed`). The label says the event, not the points; the points are in the score log and breakdown chips. Labels are short so they stay readable at the smallest board size; overlapping pop-ups on the same tile or tick stack vertically instead of drawing on top of each other. The card's score briefly flashes the same colour.
 - **Score log:** clicking the score opens a list of every scoring event up to `t`: tick, event, delta, who it's credited to, and the running total (e.g. `t23  🧍 c2 evacuated by R  +10  → 62`). Clicking a line seeks to it. Built from the engine events in §4.6, so it always matches the total.
-- **Score chart:** a small line chart per team, score over ticks, with a dot per scoring event (hover shows the event). In the multi-team layout, a shared chart with one line per team, in team colours, on a shared y-axis, shows where teams diverged.
+- **Outcome chart:** one labelled, collapsible chart below the cards shows score or another selected outcome over ticks, with one line per selected team on a shared y-axis. Cards keep only the score breakdown and clickable score log; unexplained miniature charts are intentionally omitted.
 - **Per-agent points:** the inspector shows the points credited to that agent (evacuations to the rescuer, extinguishes to each firefighter in `by`). Losses (civilians, houses) are the team's and are shown separately, not blamed on an agent.
 
 ## 10. Metrics
@@ -415,7 +445,7 @@ Every metric is a SQL query over the recording.
 - **Message latency:** `consumed_at − sent_at`, median and p90.
 - **Idle ticks:** ticks where an agent had no active order.
 - **Stale actions:** orders that targeted something already changed when issued (e.g. a fire already out, a civilian already evacuated or lost, a path through the collapsed bridge).
-- **Missed joint tasks:** ticks where an intensity-3 fire had exactly one firefighter extinguishing it.
+- **Uncovered intensity-3 fire-ticks** (stored under the legacy `missed_joint` metric key): one count for every intensity-3 fire on every tick where fewer than two firefighters have active extinguish orders for that exact target. Assignment counts while firefighters travel; lower is better.
 - **Duplicate work:** two agents with orders on the same target at the same time.
 - **Noise ratio:** share of the messages in an agent's prompt that weren't addressed to it and didn't affect its next order (a heuristic: not mentioned and no referenced entity in its vision).
 - **Context size:** prompt tokens per agent over time.
@@ -433,23 +463,34 @@ Every metric is a SQL query over the recording.
 seed: 42
 ticks: 60
 tick_ms: 5000
-teams: [none, perfect, band, subagents]
+clock: { mode: synchronized }  # default; use realtime only for the legacy wall-clock experiment
+teams: [none, perfect, chat-mentions, chat-broadcast]
 llm:
-  backend: claude-code          # claude-code (subscription) | api (ANTHROPIC_API_KEY)
+  backend: claude-code          # subscription: claude-code | codex; billed API: api | openai
   model: claude-haiku-4-5-20251001
   temperature: 0.2
+  reasoning_effort: low
   max_turns_per_decision: 3
 budget: { usd: 5.00, tokens: 10000000 }
 map: { size: 20, houses: [8, 12], civilians: [4, 6], wind_shifts: [2, 3] }
 fire: { base_spread: 0.05, growth_every: 5, burnout_ticks: 10, house_destroy_ticks: 3 }
-rules: { civilian_deadline: 15, forecast_lead: 6, water_capacity: 3, clear_debris_ticks: 2 }
+rules: { civilian_deadline: 17, forecast_lead: 6, water_capacity: 3, clear_debris_ticks: 2 }
 band: { agents_file: band_agents.yaml, rest_url: https://app.band.ai, ws_url: wss://app.band.ai/api/v1/socket/websocket }
 record: { dir: runs, prompts: true }
 agent: { message_window: 30, heartbeat_ticks: 3, order_log: 5, max_decisions_per_tick: 3 }
-subagents: { max_lifetime_ticks: 8 }
+subagents: { max_lifetime_ticks: 0 } # 0 = task-driven; set 8 to opt into the former hard cutoff
+commentator: { enabled: false, interval_ticks: 10, backend: claude-code, model: claude-haiku-4-5-20251001, max_tokens: 2400, reasoning_effort: low }
 ```
 
 Every knob in section 4 is configurable, so difficulty can be tuned.
+
+### 11.1 Replay commentator
+
+The optional commentator is a derived replay layer, never a team member. For each world it receives omniscient checkpoints containing the complete current map and entities, agent state and orders, world events, and every message sent by that team regardless of transport delivery. One post-match model call publishes timestamped, plain-language segments covering the fire situation, teamwork/communication, and decision quality.
+
+Commentary runs only after gameplay has finished, is excluded from team budgets and metrics, and is never delivered to an agent. `run --commentary` generates it eagerly. The viewer, `export`, or `commentate` command generates missing commentary for historical recordings. Results are cached as versioned JSON sidecars under `runs/commentary/`; SQLite recordings are never modified.
+
+The default commentator is Claude Haiku through the local `claude-code` subscription, independent of the gameplay backend. This keeps narration inexpensive and lets OpenAI recordings be narrated without an OpenAI credential. Setting commentator backend and model to `same` opts into the recorded gameplay model instead.
 
 ## 12. Tech stack and repo layout
 
@@ -480,10 +521,10 @@ firebreak/
 
 Answered while building v0:
 
-1. ~~Band delivery semantics.~~ Only @mentioned members receive a message; at least one mention is required (§7.3).
+1. ~~Band delivery semantics.~~ Only @mentioned members receive a message; at least one mention is required (§7.4).
 2. ~~Band accounts.~~ Five external agents in the owner's account (`Firebreak Scout`, `FF1`, `FF2`, `Engineer`, `Rescuer`), reused across matches.
-3. ~~Sub-agent implementation.~~ Our own spawn/return implementation on the shared LLM client (§7.4). An Agent SDK variant is still a possible later check.
-4. ~~Tick length.~~ 5 s works: decisions take ~4 s on both backends' current settings (docs/TUNING.md).
+3. ~~Sub-agent implementation.~~ Our own spawn/return implementation on the shared LLM client (§7.5). An Agent SDK variant is still a possible later check.
+4. ~~Tick length.~~ 5 s works for the original Anthropic backends' measured settings (docs/TUNING.md); latency is recorded for every backend.
 
 Still open:
 

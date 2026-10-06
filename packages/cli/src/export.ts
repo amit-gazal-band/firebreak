@@ -1,12 +1,17 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
-import { loadBundle } from "@firebreak/recorder";
 import { ensureViewerBuilt } from "./server";
+import { ensureCommentary, loadReplayBundle } from "./commentary";
 
 /** Write a single self-contained HTML file: the viewer with the recording embedded (SPEC §8.6). */
-export function exportHtml(recording: string, out?: string, opts: { prompts?: boolean } = {}): string {
+export async function exportHtml(
+  recording: string,
+  out?: string,
+  opts: { prompts?: boolean } = {},
+): Promise<string> {
+  await ensureCommentary(recording);
   const html = readFileSync(ensureViewerBuilt(), "utf8");
-  const bundle = loadBundle(recording, { prompts: opts.prompts ?? false });
+  const bundle = loadReplayBundle(recording, { prompts: opts.prompts ?? false });
   // Escape "<" so the JSON cannot close the script tag.
   const json = JSON.stringify(bundle).replace(/</g, "\\u003c");
   const tag = `<script>window.__FIREBREAK_BUNDLE__=${json};</script>`;

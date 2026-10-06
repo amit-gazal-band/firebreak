@@ -156,7 +156,15 @@ export function iconDataUrl(name: IconName, disc: string | null, fg: string, bad
     ctx.arc(S / 2, S / 2, S / 2 - 1, 0, Math.PI * 2);
     ctx.fill();
   }
-  drawIcon(ctx, name, S / 2, S / 2, disc ? S * 0.7 : S, fg);
+  if (name === "hq") {
+    ctx.fillStyle = fg;
+    ctx.font = `900 ${Math.round(S * 0.42)}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("HQ", S / 2, S / 2 + S * 0.02);
+  } else {
+    drawIcon(ctx, name, S / 2, S / 2, disc ? S * 0.7 : S, fg);
+  }
   if (badge) drawBadge(ctx, S * 0.8, S * 0.22, S * 0.2, badge);
   url = cv.toDataURL();
   discCache.set(key, url);

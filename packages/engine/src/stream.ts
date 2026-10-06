@@ -77,6 +77,8 @@ export interface LlmFrame {
   agent_id: string;
   started_ms: number;
   ended_ms: number;
+  /** Actual provider/process wall time. Logical timestamps can be equal in synchronized mode. */
+  latency_ms?: number;
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
@@ -89,6 +91,33 @@ export interface LlmFrame {
   error?: string;
 }
 
+/** A human-facing, omniscient narration checkpoint. It is never visible to playing agents. */
+export interface CommentarySegment {
+  tick: number;
+  t_ms: number;
+  /** Human-facing prose. Paragraphs are separated by blank lines. */
+  commentary: string;
+}
+
+/** One post-match commentator call can publish several replay-time checkpoints. */
+export interface CommentaryFrame {
+  kind: "commentary";
+  world_id: string;
+  id: string;
+  model: string;
+  generated_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cost_usd: number;
+  cost_estimated: boolean;
+  segments: CommentarySegment[];
+  /** Prompt text; omitted from bundles unless requested (it is large). */
+  prompt?: string;
+  response: string;
+  error?: string;
+}
+
 export interface EndFrame {
   kind: "end";
   t_ms: number;
@@ -97,7 +126,8 @@ export interface EndFrame {
   results: { world_id: string; team: string; score: number; cost_usd: number }[];
 }
 
-export type StreamFrame = TickFrame | EventFrame | MessageFrame | DeliveryFrame | LlmFrame | EndFrame;
+export type StreamFrame =
+  TickFrame | EventFrame | MessageFrame | DeliveryFrame | LlmFrame | CommentaryFrame | EndFrame;
 
 /** A whole recording loaded into memory, as the viewer consumes it. */
 export interface RecordingBundle {

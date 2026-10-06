@@ -3,17 +3,11 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { basename, join } from "node:path";
 import type { MatchHeader, StreamFrame } from "@firebreak/engine";
-import {
-  listRecordings,
-  loadBundle,
-  openRecording,
-  readConfig,
-  readPrompt,
-  type FrameSink,
-} from "@firebreak/recorder";
+import { listRecordings, openRecording, readConfig, readPrompt, type FrameSink } from "@firebreak/recorder";
 import { WebSocketServer, type WebSocket } from "ws";
 import { REPO_ROOT, VIEWER_DIST } from "./paths";
 import { RECORDING_DIRS } from "./run";
+import { ensureCommentary, loadReplayBundle, loadSavedCommentary } from "./commentary";
 
 function newestMtime(dir: string): number {
   let max = 0;
@@ -117,20 +111,25 @@ export async function startServer(opts: {
       if (parts[1] === "recordings" && parts[2]) {
         const p = recordingPath(parts[2]);
         if (!p) return send(res, 404, '{"error":"not found"}');
-        if (parts[3] === "prompt" && parts[4])
-          return send(
-            res,
-            200,
-            readPrompt(p, decodeURIComponent(parts[4])) ?? "",
-            "text/plain; charset=utf-8",
+        if (parts[3] === "commentary" && req.method === "POST") {
+          void ensureCommentary(p).then(
+            (frames) => send(res, 200, JSON.stringify(frames)),
+            (e) => send(res, 503, JSON.stringify({ error: e instanceof Error ? e.message : String(e) })),
           );
+          return;
+        }
+        if (parts[3] === "prompt" && parts[4]) {
+          const id = decodeURIComponent(parts[4]);
+          const prompt = readPrompt(p, id) ?? loadSavedCommentary(p).find((f) => f.id === id)?.prompt ?? "";
+          return send(res, 200, prompt, "text/plain; charset=utf-8");
+        }
         if (parts[3] === "config") {
           const db = openRecording(p);
           const cfg = readConfig(db);
           db.close();
           return send(res, 200, JSON.stringify(cfg));
         }
-        return send(res, 200, JSON.stringify(loadBundle(p)));
+        return send(res, 200, JSON.stringify(loadReplayBundle(p)));
       }
       send(res, 404, '{"error":"not found"}');
     } catch (e) {

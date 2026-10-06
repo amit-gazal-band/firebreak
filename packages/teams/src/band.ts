@@ -68,6 +68,9 @@ export class BandTransport implements Transport {
   private delivery = new Map<string, (m: DeliveredMessage) => void>();
   /** Band message id -> our message id and send time, filled when createChatMessage returns. */
   private sentIds = new Map<string, { id: string; t_ms: number }>();
+  /** Our message id -> recipients whose websocket delivery has not arrived yet. */
+  private pending = new Map<string, Set<string>>();
+  private idleWaiters = new Set<() => void>();
 
   async setup(world: WorldHandle, agentIds: string[]): Promise<void> {
     this.world = world;
@@ -156,6 +159,13 @@ export class BandTransport implements Transport {
       delivered_ms: delivered,
       addressed: true,
     });
+    const waiting = this.pending.get(ourId);
+    waiting?.delete(recipient);
+    if (waiting?.size === 0) this.pending.delete(ourId);
+    if (this.pending.size === 0) {
+      for (const resolve of this.idleWaiters) resolve();
+      this.idleWaiters.clear();
+    }
   }
 
   onDeliver(agent: string, cb: (m: DeliveredMessage) => void): void {
@@ -264,7 +274,10 @@ export class BandTransport implements Transport {
       content: text,
       mentions: targets.map((m) => ({ id: this.creds[m]!.agent_id, handle: this.handles.get(m)! })),
     });
-    if (typeof res.id === "string") this.sentIds.set(res.id, { id, t_ms });
+    if (typeof res.id === "string") {
+      this.pending.set(id, new Set(targets));
+      this.sentIds.set(res.id, { id, t_ms });
+    }
     return { text: `sent to ${targets.join(", ")} in #${room.name}`, isError: false };
   }
 
@@ -272,7 +285,39 @@ export class BandTransport implements Transport {
     return COMMS;
   }
 
+  isIdle(): boolean {
+    return this.pending.size === 0;
+  }
+
+  async idle(): Promise<void> {
+    if (this.pending.size === 0) return;
+    let wake!: () => void;
+    const delivery = new Promise<boolean>((resolve) => {
+      wake = () => resolve(true);
+      this.idleWaiters.add(wake);
+    });
+    const delivered = await Promise.race([
+      delivery,
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 10_000)),
+    ]);
+    this.idleWaiters.delete(wake);
+    if (!delivered && this.pending.size) {
+      const pending = [...this.pending.values()].reduce((n, recipients) => n + recipients.size, 0);
+      this.world.emit({
+        kind: "event",
+        tick: this.world.state().tick,
+        t_ms: this.world.now(),
+        type: "transport_error",
+        payload: { error: `timed out waiting for ${pending} Band delivery acknowledgement(s)` },
+      });
+      this.pending.clear();
+    }
+  }
+
   async teardown(): Promise<void> {
+    this.pending.clear();
+    for (const resolve of this.idleWaiters) resolve();
+    this.idleWaiters.clear();
     await Promise.all([...this.agents.values()].map((a) => a.stop(3000).catch(() => false)));
   }
 }

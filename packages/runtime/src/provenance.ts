@@ -48,6 +48,7 @@ export function provenance(repoRoot: string): {
       packages: {
         "@anthropic-ai/sdk": packageVersion("@anthropic-ai/sdk", runtimeDir),
         "@anthropic-ai/claude-agent-sdk": packageVersion("@anthropic-ai/claude-agent-sdk", runtimeDir),
+        openai: packageVersion("openai", runtimeDir),
         "@band-ai/sdk": packageVersion("@band-ai/sdk", teamsDir),
       },
     },

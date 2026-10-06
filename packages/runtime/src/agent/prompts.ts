@@ -1,17 +1,17 @@
 import { ROLES, renderMapText, type Observation, type Role, type Scenario } from "@firebreak/engine";
 
-export const PROMPT_VERSION = "3";
+export const PROMPT_VERSION = "8";
 
 const ROLE_TEXT: Record<Role, string> = {
   scout:
     "You are the SCOUT. You move 2 tiles per tick and see 5 tiles around you. You cannot fight fires, clear debris or rescue. " +
     "You are the ONLY one who receives the wind forecast (wind shifts, several ticks ahead). Your value is information: find fires, civilians and debris, and make sure the right teammates know.\n" +
-    "PLAYBOOK: keep moving; sweep the map (both sides of the river, near houses and roads, where civilians appear). Never wait.",
+    "PLAYBOOK: keep moving; sweep the map (both sides of the river, near houses and roads, where civilians appear). When you can communicate a fire, include its exact coordinates and intensity; flag intensity 3 as requiring both firefighters. Never wait.",
   firefighter:
     "You are a FIREFIGHTER. You move 1 tile per tick and see 2 tiles around you. You carry 3 water; each tick of extinguishing uses 1. " +
-    "Refill next to any water (lake or river). An intensity-3 fire can only be reduced when BOTH firefighters extinguish it in the same tick.\n" +
-    "PLAYBOOK: if you know of a fire, call extinguish(x,y) on it (it walks there by itself). Prefer fires near houses and civilians and small fires before they grow. " +
-    "For an intensity-3 fire, both firefighters must work it at the same time. When out of water, refill(). If you know of no fire, move toward where fires are likely instead of waiting.",
+    "Refill next to any water (lake or river). Every fire you can see includes its numeric intensity. Intensity 3 is the maximum and can only be reduced when BOTH firefighters extinguish it in the same tick.\n" +
+    "PLAYBOOK: if you know of a fire, call extinguish(x,y) on it (it walks there by itself). Protect civilians and houses first. Stop intensity-1/2 fires before they grow, but do not ignore an intensity-3 fire threatening people or houses: both firefighters should target the same coordinates immediately. " +
+    "When out of water, refill(). If you know of no fire, move toward where fires are likely instead of waiting.",
   engineer:
     "You are the ENGINEER. You move 1 tile per tick and see 2 tiles around you. You clear debris from roads (2 ticks) so the rescuer can drive, " +
     "and build firebreaks (1 tick) on grass/forest tiles, which stop fire from spreading.\n" +
@@ -24,14 +24,14 @@ const ROLE_TEXT: Record<Role, string> = {
     "If a civilian is unreachable because of debris, make sure the engineer knows and rescue another one meanwhile. When you know of none, patrol the roads near houses.",
 };
 
-export const RULES_TEXT = `GAME: Wildfire. Your team of 5 defends a town from spreading wildfires. The match lasts a fixed number of ticks; the world advances every few seconds whether or not you act.
+export const RULES_TEXT = `GAME: Wildfire. Your team of 5 defends a town from spreading wildfires. The match lasts a fixed number of discrete ticks. Orders persist across ticks until they finish or become blocked.
 
 MAP (fixed layout; fires, civilians and debris are NOT shown — you only know them if you or a teammate saw them):
 Legend: . grass  T forest  H house  = road  ~ water  B bridge  S fire station (start)
 Coordinates are (x, y): x = column (left to right), y = row (top to bottom).
 
 RULES
-- Fires have intensity 1-3. Unfought fires grow every few ticks and spread to neighbouring grass/forest/houses, much faster downwind.
+- Every visible fire is reported with a numeric intensity from 1 to 3. Unfought fires grow every few ticks. Higher-intensity fires are more likely to spread to neighbouring grass/forest/houses, especially downwind; intensity 3 is the maximum and needs both firefighters acting on the same target in the same tick.
 - Wind "E" means the wind blows toward the east (increasing x): fire spreads fastest eastward.
 - A house that burns at intensity 3 for 3 ticks is destroyed. Any tile burns out to ash after 10 ticks.
 - Civilians die if fire reaches them or their deadline passes.
@@ -52,6 +52,7 @@ export interface PromptParts {
 export function systemPrompt(scn: Scenario, agentId: string, role: Role, commsSection: string): string {
   return [
     RULES_TEXT,
+    `MATCH CLOCK: ${scn.config.ticks} total ticks. Every decision also states the current tick and exact ticks remaining; use the remaining time when choosing priorities and travel distances.`,
     "",
     renderMapText(scn),
     "",

@@ -19,6 +19,14 @@ const FUEL: Partial<Record<TileKind, number>> = { forest: 1.5, grass: 1.0, house
 const INTENSITY_SPREAD = [0, 1, 1.5, 2] as const;
 const WIND_VEC: Record<Wind, Vec> = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0], none: [0, 0] };
 
+/** Public scoring values used by the engine and viewer rules reference. */
+export const SCORE_VALUES = {
+  civilianEvacuated: 10,
+  civilianLost: -20,
+  fireExtinguished: 1,
+  houseStanding: 5,
+} as const;
+
 export function windFactor(wind: Wind, d: Vec): number {
   const w = WIND_VEC[wind];
   if (wind === "none") return 1;
@@ -328,7 +336,10 @@ export function step(scn: Scenario, prev: WorldState, orders: OrderBatch = {}): 
   // 9. Score and end.
   s.score.houses_standing = s.tiles.filter((k) => k === "house").length;
   s.score.total =
-    10 * s.score.evacuated - 20 * s.score.lost + s.score.extinguished + 5 * s.score.houses_standing;
+    SCORE_VALUES.civilianEvacuated * s.score.evacuated +
+    SCORE_VALUES.civilianLost * s.score.lost +
+    SCORE_VALUES.fireExtinguished * s.score.extinguished +
+    SCORE_VALUES.houseStanding * s.score.houses_standing;
   const pending = scn.schedule.some((e) => e.tick > t && (e.type === "fire" || e.type === "civilian"));
   const waiting = s.civilians.some((c) => c.status === "waiting");
   if (t >= cfg.ticks) {

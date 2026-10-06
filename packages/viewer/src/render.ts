@@ -11,7 +11,7 @@ import {
 import { ROLE_ICON, drawBadge, drawIcon, type IconName } from "./icons";
 import { SCORE_LABEL, type MessageView, type ScoreEntry } from "./timeline";
 
-const TILE: Record<TileKind, string> = {
+export const TILE_COLOR: Record<TileKind, string> = {
   grass: "#9dbb6f",
   forest: "#4f7a45",
   house: "#b58a5e",
@@ -129,7 +129,7 @@ export function drawBoard(ctx: CanvasRenderingContext2D, g: BoardGeometry, d: Dr
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
       const k = cur.tiles[y * S + x]!;
-      ctx.fillStyle = TILE[k];
+      ctx.fillStyle = TILE_COLOR[k];
       ctx.fillRect(px(x), py(y), c + 0.5, c + 0.5);
       if (k === "forest") {
         ctx.fillStyle = "#3d6436";
@@ -238,7 +238,11 @@ export function drawBoard(ctx: CanvasRenderingContext2D, g: BoardGeometry, d: Dr
     ctx.roundRect(hq[0] - c * 0.9, hq[1] - c * 0.7, c * 1.8, c * 1.4, 4);
     ctx.fill();
     ctx.stroke();
-    drawIcon(ctx, "hq", hq[0], hq[1], c * 1.15, HQ_COLOR);
+    ctx.fillStyle = HQ_COLOR;
+    ctx.font = `900 ${Math.max(9, Math.round(c * 0.48))}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("HQ", hq[0], hq[1] + c * 0.02);
   }
 
   const posOf = (id: string): Vec | null => {

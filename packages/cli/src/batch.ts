@@ -16,17 +16,33 @@ export async function runBatch(
   const c = base.config;
   const llmTeams = c.teams.map(teamFactory).filter((t) => t.usesLlm);
   const bodies = llmTeams.length * 5 + (c.teams.includes("subagents") ? 1 : 0);
-  const calls = Math.round(bodies * c.ticks * CALLS_PER_AGENT_TICK * a.seeds);
-  const minutes = ((c.ticks * c.tick_ms) / 60000) * a.seeds;
+  const gameplayCalls = Math.round(bodies * c.ticks * CALLS_PER_AGENT_TICK * a.seeds);
+  const commentaryCalls = c.commentator.enabled ? c.teams.length * a.seeds : 0;
+  const calls = gameplayCalls + commentaryCalls;
+  const simulatedMinutes = ((c.ticks * c.tick_ms) / 60000) * a.seeds;
   console.log(
     `batch: ${a.seeds} matches (seeds ${a.firstSeed}..${a.firstSeed + a.seeds - 1}), teams ${c.teams.join(", ")}`,
   );
-  if (llmTeams.length) {
+  if (llmTeams.length || commentaryCalls) {
     console.log(
-      `estimate: ~${calls} LLM calls, ~$${(calls * USD_PER_CALL).toFixed(2)}, ~${Math.ceil(minutes)} min`,
+      `estimate: ~${gameplayCalls} gameplay calls${commentaryCalls ? ` + ${commentaryCalls} post-match commentary calls` : ""}, ~$${(calls * USD_PER_CALL).toFixed(2)}, ${Math.ceil(simulatedMinutes)} simulated min; wall time depends on model latency`,
     );
-    if (c.llm.backend === "claude-code")
+    if (
+      c.llm.backend === "claude-code" ||
+      (commentaryCalls && (c.commentator.backend === "same" || c.commentator.backend === "claude-code"))
+    )
       console.log("backend claude-code: this counts against your Claude subscription's usage limits.");
+    if (
+      c.llm.backend === "codex" ||
+      (commentaryCalls && (c.commentator.backend === "same" || c.commentator.backend === "codex"))
+    )
+      console.log("backend codex: this counts against your ChatGPT/Codex subscription's usage limits.");
+    if (
+      c.llm.backend === "claude-code" ||
+      c.llm.backend === "codex" ||
+      (commentaryCalls && ["same", "claude-code", "codex"].includes(c.commentator.backend))
+    )
+      console.log("subscription backend: displayed $ figures are API-equivalent estimates, not charges.");
     if (!a.yes) {
       const rl = createInterface({ input: process.stdin, output: process.stdout });
       const ans = (await rl.question("continue? [y/N] ")).trim().toLowerCase();
@@ -42,7 +58,6 @@ export async function runBatch(
     const rc = loadResolvedConfig({ ...a, seed });
     console.log(`\n[${i + 1}/${a.seeds}] seed ${seed}`);
     const { file, result } = await runMatch(rc, {
-      virtual: a.virtual,
       cliArgs: [...a.cliArgs, `--seed=${seed}`],
     });
     files.push(file);

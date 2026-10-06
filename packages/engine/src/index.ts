@@ -10,4 +10,4 @@ export * from "./bots";
 export * from "./stream";
 
 /** Bump when rules change in a way that changes outcomes. Recorded with every match. */
-export const ENGINE_VERSION = "0.2.0";
+export const ENGINE_VERSION = "0.3.0";

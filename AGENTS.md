@@ -9,7 +9,7 @@ Firebreak runs identical wildfire worlds side by side, one per team, and compare
 ```
 packages/engine    pure deterministic simulation: rules, scenario, observations, scripted bots, stream types (browser-safe)
 packages/recorder  SQLite recordings: schema, writer, reader, metrics
-packages/runtime   match runner, clock, agent loop, prompts, order tools, LLM backends (api, claude-code)
+packages/runtime   match runner, clock, agent loop, prompts, order tools, LLM backends (api, claude-code, codex, openai)
 packages/teams     none, perfect, band (Band SDK), subagents, bots-*
 packages/viewer    Vite + Canvas 2D viewer, built to one self-contained index.html
 packages/cli       `firebreak` CLI: run, replay, verify, metrics, export, batch, report, serve
@@ -35,7 +35,7 @@ Run all four before committing. Tests never call a model or Band.
 A recording (`*.sqlite`) is the source of truth for anything that happened in a match. To answer a question about a match, read the recording rather than re-running it: runs cost model usage and are not reproducible (LLMs are not deterministic, only the engine is).
 
 - `pnpm firebreak list` finds recordings in `runs/` and `recordings/`; commands accept a path or a file name.
-- `pnpm firebreak metrics <match>` prints per-team metrics as JSON (score, cost, latency, idle agent-ticks, stale actions, missed joint tasks, noise, forecast lead...). Definitions: SPEC §10, code: `packages/recorder/src/metrics.ts`.
+- `pnpm firebreak metrics <match>` prints per-team metrics as JSON (score, relative score, cost, latency, idle agent-ticks, stale actions, uncovered intensity-3 fire-ticks, communication matrix/concentration, noise, forecast lead...). Definitions: SPEC §10, code: `packages/recorder/src/metrics.ts`.
 - `pnpm firebreak report <files...>` aggregates several matches into HTML (mean ± sd). Only compare matches from the same prompt version and LLM backend.
 - `pnpm firebreak verify <match>` re-runs the engine from the seed and recorded orders and compares every tick hash. Run it after any engine change on an old recording to see whether rules changed outcomes.
 - Query with `sqlite3`. Tables: `match`, `match_config`, `world`, `tick_state`, `event`, `message`, `delivery`, `llm_call` (schema: `packages/recorder/src/schema.ts`; examples in README). World ids are `w<N>-<team>`; agent ids `scout`, `ff1`, `ff2`, `engineer`, `rescuer`, `orchestrator`.
@@ -52,13 +52,21 @@ These are the point of the project (SPEC §2, §5). Breaking them makes results 
 - **Determinism.** The engine must stay pure: no `Math.random`, no clock, no I/O. Randomness goes through `roll(seed, tick, x, y, purpose)` so every world gets the same luck per tile and tick. `pnpm test` checks this.
 - **Version bumps.** Bump `ENGINE_VERSION` (`packages/engine/src/index.ts`) when rules change outcomes, and `PROMPT_VERSION` (`packages/runtime/src/agent/prompts.ts`) when prompts change. Both are recorded with every match.
 
+## Documentation discipline
+
+- **Update `CHANGELOG.md` in the same change for every user-visible feature, behavior/default change, metric semantic change, backend change, or replay/UI change. This is required, not optional cleanup.**
+- Keep `README.md` aligned with the current setup and user workflow, `docs/SPEC.md` aligned with normative behavior and metric definitions, and `docs/TUNING.md` aligned with measured behavior changes and comparison caveats.
+- Historical recordings are immutable. Document how new readers or metrics interpret them instead of rewriting them.
+
 ## Running matches
 
-- LLM teams run on the Claude subscription by default (`llm.backend: claude-code`, local `claude` login). A four-team, 60-tick match is ~650–850 decisions and takes ~5 minutes. Batches can exhaust the subscription's usage window; the runner then aborts with `usage_limit` and the batch stops. Ask before starting batches.
+- LLM teams run on the Claude subscription by default (`llm.backend: claude-code`, local `claude` login). Ticks are synchronized by default: all triggered decisions and message/report cascades settle before the next engine step, so wall time depends on model latency rather than `ticks × tick_ms`. A four-team, 60-tick match is ~650–850 decisions. Batches can exhaust the subscription's usage window; the runner then aborts with `usage_limit` and the batch stops. Ask before starting batches.
+- `--set llm.backend=codex` uses the local ChatGPT-authenticated `codex` login. It reuses one App Server process and one isolated thread per logical game agent; spawned Firebreak workers get a new thread per assignment. It cannot use Codex subagents or inherit user configuration.
 - `--set llm.backend=api` uses `ANTHROPIC_API_KEY` instead (billed).
-- Use scripted bots and virtual time for anything that doesn't need a model: `pnpm firebreak run --teams bots-none,bots-perfect --virtual`.
+- `--set llm.backend=openai` uses `OPENAI_API_KEY` instead (billed).
+- Use scripted bots for anything that doesn't need a model: `pnpm firebreak run --teams bots-none,bots-perfect`. `--realtime` opts into the legacy wall-clock engine; `--virtual` remains a synchronized-mode compatibility alias.
 - The Band team needs `band_agents.yaml` (git-ignored; template: `band_agents.yaml.example`) and creates real rooms in that Band account. Only one match using the band team can run at a time on one set of Band agents.
 
 ## Secrets
 
-`band_agents.yaml` and `.env` are git-ignored and must stay that way. Recordings never contain credentials: config values under secret-looking keys are redacted before they are written (`redact` in `packages/runtime/src/config.ts`), and the `claude-code` backend strips `ANTHROPIC_API_KEY` from its subprocess.
+`band_agents.yaml` and `.env` are git-ignored and must stay that way. Recordings never contain credentials: config values under secret-looking keys are redacted before they are written (`redact` in `packages/runtime/src/config.ts`). Subscription backends strip API-key environment variables from their subprocesses.

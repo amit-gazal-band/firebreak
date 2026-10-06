@@ -68,7 +68,12 @@ export class PeerTeam implements TeamController {
   }
 
   async idle(): Promise<void> {
-    await Promise.all(this.agents.map((a) => a.idle()));
+    for (;;) {
+      await Promise.all(this.agents.map((a) => a.idle()));
+      await this.opts.transport?.idle?.();
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      if (this.agents.every((a) => a.isIdle()) && (this.opts.transport?.isIdle?.() ?? true)) return;
+    }
   }
 
   async teardown(): Promise<void> {

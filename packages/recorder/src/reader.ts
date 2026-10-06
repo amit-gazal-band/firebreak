@@ -146,6 +146,7 @@ export function loadBundle(path: string, opts: { prompts?: boolean } = {}): Reco
         agent_id: r.agent_id as string,
         started_ms: Number(r.started_ms),
         ended_ms: Number(r.ended_ms),
+        ...(r.latency_ms === null || r.latency_ms === undefined ? {} : { latency_ms: Number(r.latency_ms) }),
         input_tokens: Number(r.input_tokens),
         output_tokens: Number(r.output_tokens),
         cache_read_tokens: Number(r.cache_read_tokens),
